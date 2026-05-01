@@ -1,0 +1,13 @@
+{
+  "askedgar_api_key": "YOUR_ASKEDGAR_API_KEY",
+  "secapi_io_key": "YOUR_SEC_API_IO_KEY",
+  "postgres": {
+    "host": "your-postgres-host.example.com",
+    "port": 5432,
+    "dbname": "postgres",
+    "user": "your-user",
+    "password": "your-password",
+    "sslmode": "require"
+  },
+  "port": 8765
+}

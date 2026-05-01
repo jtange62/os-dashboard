@@ -1,0 +1,1308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>OS Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c232b;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --red-bg: rgba(248, 81, 73, 0.12);
+    --yellow: #d29922;
+    --yellow-bg: rgba(210, 153, 34, 0.12);
+    --orange: #f0883e;
+    --orange-bg: rgba(240, 136, 62, 0.12);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 14px/1.5 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 24px 0;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+  .header-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 8px;
+  }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0.4px; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .tabs { display: flex; gap: 0; }
+  .tab {
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 10px 16px;
+    font: inherit;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  form.search { display: flex; gap: 8px; margin-left: auto; }
+  input[type=text], input[type=date], input[type=number] {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  input[type=text] { width: 220px; text-transform: uppercase; letter-spacing: 0.5px; }
+  input:focus { border-color: var(--accent); outline: none; }
+  button.primary, button.secondary {
+    border: none;
+    border-radius: 6px;
+    padding: 7px 14px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  button.primary { background: var(--accent); color: #0d1117; }
+  button.primary:hover { background: #79b8ff; }
+  button.secondary {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  button.secondary:hover { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  main { max-width: 1680px; margin: 0 auto; padding: 20px 24px 60px; }
+  .panel-grid { display: grid; gap: 18px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+  }
+  section h2 {
+    margin: 0 0 14px;
+    font-size: 13px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    font-weight: 600;
+  }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+  .card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
+  .card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card .value { font-size: 20px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .card .value.small { font-size: 14px; }
+  .card .sub { color: var(--muted); font-size: 11px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .card .value.high { color: var(--orange); }
+  .card .value.warn { color: var(--yellow); }
+  .card .value.bad  { color: var(--red); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th {
+    text-align: left;
+    color: var(--muted);
+    font-weight: 500;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    background: var(--panel);
+    position: sticky; top: 0; z-index: 1;
+  }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:hover td { background: var(--panel-2); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.bad  { color: var(--red); background: var(--red-bg); font-weight: 600; }
+  td.warn { color: var(--yellow); background: var(--yellow-bg); }
+  td.note { font-size: 11px; color: var(--muted); }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .status { color: var(--muted); padding: 8px 0; font-size: 13px; }
+  .error {
+    color: var(--red);
+    padding: 10px 12px;
+    background: var(--red-bg);
+    border: 1px solid rgba(248, 81, 73, 0.3);
+    border-radius: 6px;
+    font-size: 13px;
+  }
+
+  .form-pill {
+    display: inline-block;
+    padding: 1px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    margin-left: 4px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .badge.aff  { background: var(--orange-bg); color: var(--orange); }
+  .badge.ins  { background: var(--yellow-bg); color: var(--yellow); }
+  .badge.exec { background: rgba(88, 166, 255, 0.15); color: var(--accent); }
+  .badge.bad  { background: var(--red-bg); color: var(--red); }
+  .badge.ok   { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+  .badge.pin  { background: rgba(88, 166, 255, 0.15); color: var(--accent); cursor: pointer; }
+
+  .scroll { max-height: 560px; overflow: auto; }
+  .scroll-x { overflow-x: auto; }
+  #chart-wrap { position: relative; height: 380px; }
+
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 10px;
+  }
+  .meta-row strong { color: var(--text); }
+
+  /* Review queue editable cells */
+  .editable {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-family: inherit;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    width: 110px;
+  }
+  .editable:focus { border-color: var(--accent); outline: none; }
+  .editable.dirty {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .editable.warn { border-color: var(--yellow); background: var(--yellow-bg); }
+  .editable.num { text-align: right; }
+  .editable.notes {
+    width: 220px;
+    min-height: 32px;
+    resize: vertical;
+    text-align: left;
+    font-family: inherit;
+    font-variant-numeric: normal;
+  }
+  select.editable { width: auto; }
+
+  .row-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-wrap: wrap;
+    white-space: nowrap;
+  }
+  .row-actions button { padding: 3px 8px; font-size: 11px; }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  .review-table-wrap {
+    max-height: 75vh;
+    overflow: auto;
+  }
+  .review-table { font-size: 12px; }
+  .review-table th { font-size: 10px; }
+  .review-table td { padding: 6px 8px; }
+  .review-table td.row-key {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    min-width: 130px;
+  }
+  .review-table tr:hover td.row-key { background: var(--panel-2); }
+  .review-table tr.pinned td.row-key {
+    border-left: 2px solid var(--accent);
+  }
+  .stale-row td {
+    opacity: 0.55;
+  }
+  .save-btn.dirty {
+    background: var(--accent);
+    color: #0d1117;
+  }
+
+  details.detail-cell { font-size: 11px; }
+  details.detail-cell summary {
+    cursor: pointer;
+    color: var(--muted);
+    list-style: none;
+  }
+  details.detail-cell summary::-webkit-details-marker { display: none; }
+  details.detail-cell summary::before { content: "▸ "; color: var(--muted); }
+  details.detail-cell[open] summary::before { content: "▾ "; }
+  details.detail-cell .body {
+    padding: 6px 0 4px;
+    color: var(--text);
+    white-space: pre-wrap;
+    max-width: 480px;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 13px;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .toast.success { border-color: var(--green); }
+  .toast.error { border-color: var(--red); color: var(--red); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-row">
+    <h1>OS Dashboard</h1>
+    <span class="sub">Float &amp; outstanding share research</span>
+    <form id="search-form" class="search">
+      <input id="ticker-input" type="text" placeholder="Ticker (e.g. NTCL)" autocomplete="off" autofocus />
+      <button type="submit" class="primary" id="search-btn">Research</button>
+    </form>
+  </div>
+  <div class="tabs">
+    <button class="tab active" data-tab="research">Research</button>
+    <button class="tab" data-tab="review">Review Queue</button>
+  </div>
+</header>
+
+<main>
+
+<div class="tab-content active" id="tab-research">
+  <div class="panel-grid">
+    <section>
+      <h2>Latest Snapshot</h2>
+      <div id="snapshot-body"><div class="status">Enter a ticker above to begin.</div></div>
+    </section>
+    <section>
+      <h2>Historical Float &amp; Outstanding Shares</h2>
+      <div id="chart-wrap"><canvas id="float-chart"></canvas></div>
+      <div id="chart-status" class="status"></div>
+    </section>
+    <section>
+      <h2>Historical Float Records</h2>
+      <div id="history-body" class="scroll-x scroll"></div>
+    </section>
+    <section>
+      <h2>Recent Offerings</h2>
+      <div id="offerings-body" class="scroll-x scroll"></div>
+    </section>
+    <section>
+      <h2>Latest Ownership</h2>
+      <div id="ownership-body" class="scroll-x scroll"></div>
+    </section>
+    <section>
+      <h2>Recent Filings With Ownership Tables</h2>
+      <div id="filings-body" class="scroll-x scroll"></div>
+    </section>
+  </div>
+</div>
+
+<div class="tab-content" id="tab-review">
+  <section>
+    <h2>Review Queue</h2>
+    <form id="review-form" class="meta-row" style="margin-bottom:14px;">
+      <label>Filed at:
+        <input type="date" id="review-date" />
+      </label>
+      <button type="submit" class="primary" id="review-refresh">Refresh</button>
+      <button type="button" class="secondary" id="review-today">Today</button>
+      <button type="button" class="secondary" id="review-yesterday">Yesterday (CDT)</button>
+      <span id="review-summary" class="status" style="margin-left:auto;"></span>
+    </form>
+    <div id="review-body"></div>
+  </section>
+</div>
+
+</main>
+
+<div id="toast" style="display:none;" class="toast"></div>
+
+<script>
+// ---------------- shared utils ----------------
+const OWNERSHIP_FORMS = [
+  "S-1", "S-1/A",
+  "F-1", "F-1/A",
+  "DEF 14A", "PRE 14A",
+  "DEF 14C", "PRE 14C",
+  "10-K", "10-K/A",
+  "20-F", "20-F/A",
+];
+const BIG_CHANGE = 0.25; // 25% relative change is "big"
+
+const num = (v) => {
+  if (v == null || v === "") return null;
+  const n = typeof v === "number" ? v : Number(String(v).replace(/,/g, ""));
+  return isFinite(n) ? n : null;
+};
+const fmtInt = (n) => {
+  const v = num(n);
+  return v == null ? "—" : Math.round(v).toLocaleString();
+};
+const fmtPctFrac = (p) => {
+  const v = num(p);
+  return v == null ? "—" : (v * 100).toFixed(2) + "%";
+};
+const fmtDate = (d) => d ? String(d).slice(0, 10) : "—";
+const fmtDateTime = (d) => d ? new Date(d).toLocaleString() : "—";
+const escapeHtml = (s) => s == null ? "" : String(s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+function askEdgarLink(ticker, filingUrl, label) {
+  if (!filingUrl) return "—";
+  const url = `https://app.askedgar.io/filing?ticker=${encodeURIComponent(ticker || "")}&filingUrl=${encodeURIComponent(filingUrl)}`;
+  return `<a href="${url}" target="_blank" rel="noopener">${escapeHtml(label || "Open")}</a>`;
+}
+
+function setStatus(id, msg) { document.getElementById(id).innerHTML = `<div class="status">${msg}</div>`; }
+function setError(id, msg)  { document.getElementById(id).innerHTML = `<div class="error">${escapeHtml(msg)}</div>`; }
+
+let toastTimer = null;
+function toast(msg, kind = "success") {
+  const el = document.getElementById("toast");
+  el.className = `toast ${kind}`;
+  el.textContent = msg;
+  el.style.display = "block";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.display = "none"; }, 3500);
+}
+
+// ---------------- tab switching ----------------
+document.querySelectorAll(".tab").forEach((b) => {
+  b.addEventListener("click", () => {
+    const target = b.dataset.tab;
+    document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === b));
+    document.querySelectorAll(".tab-content").forEach((c) => c.classList.toggle("active", c.id === `tab-${target}`));
+    history.replaceState(null, "", updateQueryParam("tab", target));
+    if (target === "review" && !reviewLoadedOnce) {
+      loadReview();
+    }
+  });
+});
+function updateQueryParam(key, value) {
+  const u = new URL(window.location);
+  u.searchParams.set(key, value);
+  return u.pathname + u.search;
+}
+
+// ===================================================================
+// RESEARCH TAB
+// ===================================================================
+let chartInstance = null;
+let currentTicker = "";
+
+async function research(ticker) {
+  ticker = (ticker || "").trim().toUpperCase();
+  if (!ticker) return;
+  currentTicker = ticker;
+  document.getElementById("ticker-input").value = ticker;
+  const u = new URL(window.location);
+  u.searchParams.set("ticker", ticker);
+  history.replaceState(null, "", u.pathname + u.search);
+  document.title = `${ticker} · OS Dashboard`;
+  const btn = document.getElementById("search-btn");
+  btn.disabled = true;
+  btn.textContent = "Loading…";
+
+  setStatus("snapshot-body", "Loading…");
+  setStatus("chart-status", "Loading…");
+  setStatus("history-body", "Loading…");
+  setStatus("offerings-body", "Loading…");
+  setStatus("ownership-body", "Loading…");
+  setStatus("filings-body", "Loading…");
+
+  const [hist, restricted, owners, splits, offerings, filings] = await Promise.allSettled([
+    fetchHistoricalFloat(ticker),
+    fetchRestrictedShares(ticker),
+    fetchOwnership(ticker),
+    fetchReverseSplits(ticker),
+    fetchOfferings(ticker),
+    fetchFilings(ticker),
+  ]);
+
+  renderResearchHistory(ticker, hist, restricted);
+  renderOfferings(ticker, offerings);
+  renderOwnership(ticker, owners, splits);
+  renderFilings(ticker, filings);
+
+  btn.disabled = false;
+  btn.textContent = "Research";
+}
+
+async function fetchHistoricalFloat(ticker) {
+  const r = await fetch(`/api/historical-float?ticker=${encodeURIComponent(ticker)}&limit=100&page=1`);
+  const j = await r.json();
+  if (!r.ok || j.status === "error") throw new Error(j?.error?.message || `HTTP ${r.status}`);
+  return j;
+}
+
+async function fetchRestrictedShares(ticker) {
+  const r = await fetch(`/api/restricted-shares?ticker=${encodeURIComponent(ticker)}`);
+  const j = await r.json();
+  if (!r.ok || j.status === "error") throw new Error(j?.error?.message || `HTTP ${r.status}`);
+  return j;
+}
+
+async function fetchOfferings(ticker) {
+  const r = await fetch(`/api/offerings?ticker=${encodeURIComponent(ticker)}&limit=5&page=1`);
+  const j = await r.json();
+  if (!r.ok || j.status === "error") throw new Error(j?.error?.message || `HTTP ${r.status}`);
+  return j;
+}
+
+async function fetchReverseSplits(ticker) {
+  const r = await fetch(`/api/reverse-splits?ticker=${encodeURIComponent(ticker)}&limit=20&page=1`);
+  const j = await r.json();
+  if (!r.ok || j.status === "error") throw new Error(j?.error?.message || `HTTP ${r.status}`);
+  return j;
+}
+
+async function fetchOwnership(ticker) {
+  const r = await fetch(`/api/ownership?ticker=${encodeURIComponent(ticker)}&limit=5`);
+  const j = await r.json();
+  if (!r.ok || j.status === "error") throw new Error(j?.error?.message || `HTTP ${r.status}`);
+  return j;
+}
+
+async function fetchFilings(ticker) {
+  const formClause = OWNERSHIP_FORMS.map((f) => `"${f}"`).join(",");
+  const query = `ticker:${ticker} AND formType:(${formClause})`;
+  const r = await fetch("/api/filings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      from: "0",
+      size: "50",
+      sort: [{ filedAt: { order: "desc" } }],
+    }),
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j?.error || j?.message || `HTTP ${r.status}`);
+  return j;
+}
+
+function renderResearchHistory(ticker, res, restrictedRes) {
+  if (res.status === "rejected") {
+    setError("snapshot-body", `Failed to load: ${res.reason.message}`);
+    setError("history-body", `Failed to load: ${res.reason.message}`);
+    setStatus("chart-status", "");
+    return;
+  }
+  const rows = (res.value.results || []).slice();
+  if (!rows.length) {
+    setError("snapshot-body", "No historical float data found.");
+    setError("history-body", "No records.");
+    setStatus("chart-status", "No data to chart.");
+    return;
+  }
+  // Merge restricted_shares from Postgres by document_url.
+  const restrictedMap = (restrictedRes && restrictedRes.status === "fulfilled")
+    ? (restrictedRes.value.results || {}) : {};
+  for (const r of rows) {
+    if (r.document_url && restrictedMap[r.document_url] != null) {
+      r.restricted_shares = restrictedMap[r.document_url];
+    }
+  }
+  rows.sort((a, b) => (b.reported_date || b.filed_at || "").localeCompare(a.reported_date || a.filed_at || ""));
+  renderSnapshot(rows[0]);
+  renderHistoryTable(ticker, rows);
+  renderChart(rows);
+}
+
+function renderSnapshot(r) {
+  const aff = (num(r.affiliate_percent) || 0) * 100;
+  const affCls = aff >= 50 ? " high" : aff >= 30 ? " warn" : "";
+  const floatVal = num(r.float);
+  const tradVal = num(r.tradable_float);
+  const floatBad = floatVal != null && floatVal < 0;
+  const tradBad = tradVal != null && tradVal < 0;
+
+  const cards = [
+    { label: "Ticker", value: escapeHtml(r.ticker || ""), sub: r.cik ? `CIK ${escapeHtml(r.cik)}` : (r.classes_details ? escapeHtml(r.classes_details) : "") },
+    { label: "Outstanding", value: fmtInt(r.outstanding_shares) },
+    { label: "Float", value: fmtInt(r.float), valueCls: floatBad ? " bad" : "", sub: floatBad ? "NEGATIVE" : `Tradable: ${fmtInt(r.tradable_float)}` },
+    { label: "Tradable Float", value: fmtInt(r.tradable_float), valueCls: tradBad ? " bad" : "", sub: tradBad ? "NEGATIVE" : "" },
+    { label: "Affiliate %", value: fmtPctFrac(r.affiliate_percent), valueCls: affCls, sub: `${fmtInt(r.affiliate_shares)} shares` },
+    { label: "Restricted", value: fmtInt(r.restricted_shares), sub: r.restricted_shares != null ? "from DB" : "" },
+    { label: "Insider %", value: fmtPctFrac(r.insider_percent), sub: `${fmtInt(r.insider_shares)} shares` },
+    { label: "ADS Ratio", value: r.ads_ratio == null || r.ads_ratio === "" ? "—" : Number(r.ads_ratio).toFixed(4), sub: r.is_adr ? "ADR" : "" },
+    { label: "Market Cap", value: r.market_cap ? "$" + fmtInt(r.market_cap) : "—" },
+    {
+      label: "Source Filing",
+      value: `<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`,
+      valueSmall: true,
+      sub: `${fmtDate(r.reported_date || r.filed_at)} · ${askEdgarLink(r.ticker, r.document_url, "Open")}`,
+    },
+  ];
+
+  const flags = [];
+  if (r.foreign_company) flags.push('<span class="badge ins">Foreign</span>');
+  if (r.is_adr) flags.push('<span class="badge ins">ADR</span>');
+  if (r.number_classes && Number(r.number_classes) > 1) flags.push(`<span class="badge exec">${escapeHtml(r.number_classes)} share classes</span>`);
+  if (floatBad || tradBad) flags.push('<span class="badge bad">Negative float</span>');
+
+  document.getElementById("snapshot-body").innerHTML = `
+    <div class="meta-row">
+      <span>Reported: <strong>${fmtDate(r.reported_date)}</strong></span>
+      <span>Filed: <strong>${fmtDate(r.filed_at)}</strong></span>
+      <span>Last refreshed: <strong>${fmtDateTime(r.last_updated)}</strong></span>
+      ${r.classes_details ? `<span>Classes: <strong>${escapeHtml(r.classes_details)}</strong></span>` : ""}
+      ${flags.length ? `<span>${flags.join(" ")}</span>` : ""}
+    </div>
+    <div class="cards">
+      ${cards.map((c) => `
+        <div class="card">
+          <div class="label">${c.label}</div>
+          <div class="value${c.valueSmall ? " small" : ""}${c.valueCls || ""}">${c.value || "—"}</div>
+          ${c.sub ? `<div class="sub">${c.sub}</div>` : ""}
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+// Compute "big change" flags by comparing each row to its older neighbor.
+function computeChangeFlags(rows, fields) {
+  const flags = rows.map(() => ({}));
+  for (let i = 0; i < rows.length - 1; i++) {
+    const cur = rows[i];
+    const prev = rows[i + 1];
+    for (const f of fields) {
+      const a = num(cur[f]);
+      const b = num(prev[f]);
+      if (a == null || b == null) continue;
+      if (b === 0) {
+        if (a !== 0) flags[i][f] = "big";
+        continue;
+      }
+      const delta = Math.abs(a - b) / Math.abs(b);
+      if (delta >= BIG_CHANGE) flags[i][f] = "big";
+    }
+  }
+  return flags;
+}
+
+function cellNum(value, opts = {}) {
+  const v = num(value);
+  const cls = ["num"];
+  if (opts.bigChange) cls.push("warn");
+  if (opts.negative && v != null && v < 0) cls.push("bad");
+  return `<td class="${cls.join(" ")}">${fmtInt(value)}</td>`;
+}
+
+function renderHistoryTable(ticker, rows) {
+  const fields = ["outstanding_shares", "float", "tradable_float", "affiliate_shares", "restricted_shares"];
+  const flags = computeChangeFlags(rows, fields);
+
+  const html = `
+    <table>
+      <thead><tr>
+        <th>Reported</th>
+        <th>Filed</th>
+        <th>Form</th>
+        <th class="num">Outstanding</th>
+        <th class="num">Float</th>
+        <th class="num">Tradable</th>
+        <th class="num">Affiliate Sh</th>
+        <th class="num">Restricted</th>
+        <th class="num">Aff %</th>
+        <th class="num">Insider %</th>
+        <th>ADR</th>
+        <th class="num">ADS Ratio</th>
+        <th>Ownership Source</th>
+        <th>Filing</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map((r, i) => `
+          <tr>
+            <td>${fmtDate(r.reported_date)}</td>
+            <td>${fmtDate(r.filed_at)}</td>
+            <td><span class="form-pill">${escapeHtml(r.form_type || "—")}</span></td>
+            ${cellNum(r.outstanding_shares, { bigChange: flags[i].outstanding_shares })}
+            ${cellNum(r.float, { bigChange: flags[i].float, negative: true })}
+            ${cellNum(r.tradable_float, { bigChange: flags[i].tradable_float, negative: true })}
+            ${cellNum(r.affiliate_shares, { bigChange: flags[i].affiliate_shares })}
+            ${cellNum(r.restricted_shares, { bigChange: flags[i].restricted_shares })}
+            <td class="num">${fmtPctFrac(r.affiliate_percent)}</td>
+            <td class="num">${fmtPctFrac(r.insider_percent)}</td>
+            <td>${r.is_adr === true ? "Yes" : r.is_adr === false ? "No" : "—"}</td>
+            <td class="num">${r.ads_ratio == null || r.ads_ratio === "" ? "—" : Number(r.ads_ratio).toFixed(4)}</td>
+            <td>${r.ownership_source ? askEdgarLink(ticker, r.ownership_source, fmtDate(r.source_date) || "source") : "—"}</td>
+            <td>${askEdgarLink(ticker, r.document_url, "Open")}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  document.getElementById("history-body").innerHTML = html;
+}
+
+function renderChart(rows) {
+  const data = [...rows]
+    .filter((r) => r.reported_date || r.filed_at)
+    .sort((a, b) => (a.reported_date || a.filed_at).localeCompare(b.reported_date || b.filed_at));
+  document.getElementById("chart-status").innerHTML = "";
+
+  const ctx = document.getElementById("float-chart");
+  if (chartInstance) chartInstance.destroy();
+  chartInstance = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: data.map((r) => fmtDate(r.reported_date || r.filed_at)),
+      datasets: [
+        {
+          label: "Outstanding",
+          data: data.map((r) => num(r.outstanding_shares)),
+          borderColor: "#58a6ff",
+          backgroundColor: "rgba(88,166,255,0.1)",
+          tension: 0.05, pointRadius: 3, pointHoverRadius: 5,
+        },
+        {
+          label: "Float",
+          data: data.map((r) => num(r.float)),
+          borderColor: "#3fb950",
+          backgroundColor: "rgba(63,185,80,0.1)",
+          tension: 0.05, pointRadius: 3, pointHoverRadius: 5,
+        },
+        {
+          label: "Tradable Float",
+          data: data.map((r) => num(r.tradable_float)),
+          borderColor: "#d29922",
+          backgroundColor: "rgba(210,153,34,0.1)",
+          tension: 0.05, pointRadius: 2, pointHoverRadius: 4,
+          borderDash: [3, 3],
+        },
+        {
+          label: "Affiliate Shares",
+          data: data.map((r) => num(r.affiliate_shares)),
+          borderColor: "#f0883e",
+          backgroundColor: "rgba(240,136,62,0.1)",
+          tension: 0.05, pointRadius: 2, pointHoverRadius: 4,
+          borderDash: [5, 4],
+        },
+        {
+          label: "Restricted Shares",
+          data: data.map((r) => num(r.restricted_shares)),
+          borderColor: "#bb86fc",
+          backgroundColor: "rgba(187,134,252,0.08)",
+          tension: 0.05, pointRadius: 2, pointHoverRadius: 4,
+          borderDash: [2, 4],
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { labels: { color: "#e6edf3" } },
+        tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${fmtInt(c.parsed.y)}` } },
+      },
+      scales: {
+        x: { ticks: { color: "#8b949e", maxRotation: 0 }, grid: { color: "#30363d" } },
+        y: { ticks: { color: "#8b949e", callback: (v) => fmtInt(v) }, grid: { color: "#30363d" } },
+      },
+    },
+  });
+}
+
+function ownerBadge(type) {
+  if (!type) return "";
+  const t = type.toLowerCase();
+  if (t.includes("executive")) return '<span class="badge exec">Executive</span>';
+  if (t.includes("director")) return '<span class="badge exec">Director</span>';
+  if (t.includes("percent investor") || t.includes("investor") || t.includes("10+")) return '<span class="badge aff">Investor</span>';
+  return `<span class="badge ins">${escapeHtml(type)}</span>`;
+}
+
+// Cumulative split factor for splits with execution_date strictly AFTER reportedDate.
+// Returns 1 when no splits apply. For a 10:1 reverse split (split_from=10, split_to=1)
+// applied after the report, factor = 1/10 = 0.1.
+function splitFactorAfter(reportedDate, splits) {
+  if (!reportedDate || !splits || !splits.length) return 1;
+  let factor = 1;
+  for (const s of splits) {
+    if (s.execution_date && s.execution_date > reportedDate) {
+      const from = num(s.split_from);
+      const to   = num(s.split_to);
+      if (from && to) factor *= (to / from);
+    }
+  }
+  return factor;
+}
+
+function adjustedCell(value, factor) {
+  const v = num(value);
+  if (v == null) return `<td class="num">—</td>`;
+  if (factor === 1) return `<td class="num">${fmtInt(v)}</td>`;
+  const adj = v * factor;
+  return `<td class="num">${fmtInt(adj)}<div class="sub" style="color:var(--muted);font-size:11px;">raw: ${fmtInt(v)}</div></td>`;
+}
+
+function renderOwnership(ticker, res, splitsRes) {
+  if (res.status === "rejected") return setError("ownership-body", `Failed to load: ${res.reason.message}`);
+  const groups = res.value.results || [];
+  if (!groups.length) return setError("ownership-body", "No ownership records.");
+  const latest = groups[0];
+  const owners = latest.owners || [];
+
+  const splits = (splitsRes && splitsRes.status === "fulfilled")
+    ? (splitsRes.value.results || []) : [];
+  const factor = splitFactorAfter(latest.reported_date, splits);
+  const splitsApplied = splits.filter((s) => s.execution_date && latest.reported_date && s.execution_date > latest.reported_date);
+
+  const totalOSraw = num(owners[0]?.outstanding_shares_final);
+  const totalOSadj = totalOSraw != null ? totalOSraw * factor : null;
+  const sumField = (field) => owners.reduce((s, o) => s + (num(o[field]) || 0), 0);
+  const totals = {
+    common:        sumField("common_shares_amount"),
+    preferred:     sumField("preferred_shares_amount"),
+    options:       sumField("options_amount"),
+    warrants:      sumField("warrants_amount"),
+    convertibles:  sumField("shares_underlying_convertibles"),
+    rsu:           sumField("restricted_stock_units"),
+  };
+  const totalCommonRaw = totals.common;
+  const totalCommonAdj = totalCommonRaw * factor;
+  const totalCommonPct = totalOSadj ? (totalCommonAdj / totalOSadj) * 100 : null;
+
+  const splitNote = splitsApplied.length
+    ? `<span style="color:var(--yellow);">${splitsApplied.length} split(s) since reported_date · adjustment factor ${factor.toFixed(4)} (${splitsApplied.map(s => `${num(s.split_from)}:${num(s.split_to)} on ${fmtDate(s.execution_date)}`).join(", ")})</span>`
+    : `<span>No splits since reported_date</span>`;
+
+  const html = `
+    <div class="meta-row">
+      <span>Reported: <strong>${fmtDate(latest.reported_date)}</strong></span>
+      <span>Owners listed: <strong>${owners.length}</strong></span>
+      ${totalOSraw ? `<span>Outstanding ${factor !== 1 ? "(adjusted)" : "(per filing)"}: <strong>${fmtInt(totalOSadj)}</strong>${factor !== 1 ? ` <span class="sub" style="color:var(--muted);">raw: ${fmtInt(totalOSraw)}</span>` : ""}</span>` : ""}
+      <span>Sum of common ${factor !== 1 ? "(adjusted)" : ""}: <strong>${fmtInt(totalCommonAdj)}</strong>${totalOSadj ? ` (${((totalCommonAdj / totalOSadj) * 100).toFixed(2)}%)` : ""}</span>
+      ${splitNote}
+    </div>
+    <table>
+      <thead><tr>
+        <th>Owner</th><th>Type</th><th>Title</th>
+        <th class="num">Common${factor !== 1 ? " (adj.)" : ""}</th><th class="num">% of OS</th>
+        <th class="num">Preferred${factor !== 1 ? " (adj.)" : ""}</th>
+        <th class="num">Options${factor !== 1 ? " (adj.)" : ""}</th>
+        <th class="num">Warrants${factor !== 1 ? " (adj.)" : ""}</th>
+        <th class="num">Convertibles${factor !== 1 ? " (adj.)" : ""}</th>
+        <th class="num">RSU${factor !== 1 ? " (adj.)" : ""}</th>
+        <th>Source</th><th>Form</th><th>Filed</th><th>Filing</th>
+      </tr></thead>
+      <tbody>
+        ${owners.map((o) => {
+          const cs = num(o.common_shares_amount);
+          const os = num(o.outstanding_shares_final);
+          const pctOs = (cs != null && os) ? (cs / os) * 100 : null;
+          return `
+          <tr>
+            <td>${escapeHtml(o.owner_name) || "—"}</td>
+            <td>${ownerBadge(o.owner_type) || "—"}</td>
+            <td>${escapeHtml(o.title) || ""}</td>
+            ${adjustedCell(o.common_shares_amount, factor)}
+            <td class="num">${pctOs == null ? "—" : pctOs.toFixed(2) + "%"}</td>
+            ${adjustedCell(o.preferred_shares_amount, factor)}
+            ${adjustedCell(o.options_amount, factor)}
+            ${adjustedCell(o.warrants_amount, factor)}
+            ${adjustedCell(o.shares_underlying_convertibles, factor)}
+            ${adjustedCell(o.restricted_stock_units, factor)}
+            <td>${escapeHtml(o.source_table) || "—"}</td>
+            <td><span class="form-pill">${escapeHtml(o.form_type || "")}</span></td>
+            <td>${fmtDate(o.filed_at)}</td>
+            <td>${askEdgarLink(ticker, o.document_url, "Open")}</td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+      <tfoot>
+        <tr style="font-weight:600;background:var(--bg);">
+          <td colspan="3">Total (${owners.length} owners)</td>
+          ${adjustedCell(totals.common, factor)}
+          <td class="num">${totalCommonPct == null ? "—" : totalCommonPct.toFixed(2) + "%"}</td>
+          ${adjustedCell(totals.preferred, factor)}
+          ${adjustedCell(totals.options, factor)}
+          ${adjustedCell(totals.warrants, factor)}
+          ${adjustedCell(totals.convertibles, factor)}
+          ${adjustedCell(totals.rsu, factor)}
+          <td colspan="4"></td>
+        </tr>
+      </tfoot>
+    </table>
+  `;
+  document.getElementById("ownership-body").innerHTML = html;
+}
+
+function renderOfferings(ticker, res) {
+  if (res.status === "rejected") return setError("offerings-body", `Failed to load: ${res.reason.message}`);
+  const offerings = (res.value.results || []).slice(0, 5);
+  if (!offerings.length) {
+    document.getElementById("offerings-body").innerHTML = `<div class="status">No recent offerings.</div>`;
+    return;
+  }
+  const html = `
+    <table>
+      <thead><tr>
+        <th>Filed</th>
+        <th>Form</th>
+        <th>Headline</th>
+        <th class="num">Shares</th>
+        <th class="num">Price</th>
+        <th class="num">Warrants</th>
+        <th class="num">Conv. Price</th>
+        <th class="num">Amount Raised</th>
+        <th>Filing</th>
+      </tr></thead>
+      <tbody>
+        ${offerings.map((o) => `
+          <tr>
+            <td>${fmtDate(o.filed_at)}</td>
+            <td><span class="form-pill">${escapeHtml(o.form_type || "—")}</span></td>
+            <td>
+              <strong>${escapeHtml(o.headline || "—")}</strong>
+              ${o.selling_shareholder_details ? `<details class="detail-cell"><summary>Details</summary><div class="body">${escapeHtml(o.selling_shareholder_details)}</div></details>` : ""}
+            </td>
+            <td class="num">${fmtInt(o.shares_amount)}</td>
+            <td class="num">${o.share_price == null ? "—" : "$" + Number(o.share_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+            <td class="num">${fmtInt(o.warrants_amount)}</td>
+            <td class="num">${o.conversion_price == null ? "—" : "$" + Number(o.conversion_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+            <td class="num">${o.offering_amount == null ? "—" : "$" + fmtInt(o.offering_amount)}</td>
+            <td>${o.askedgar_url ? `<a href="${escapeHtml(o.askedgar_url)}" target="_blank" rel="noopener">Open</a>` : "—"}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  document.getElementById("offerings-body").innerHTML = html;
+}
+
+function renderFilings(ticker, res) {
+  if (res.status === "rejected") return setError("filings-body", `Failed to load: ${res.reason.message}`);
+  const allowed = new Set(OWNERSHIP_FORMS);
+  const filings = (res.value.filings || []).filter((f) => allowed.has(f.formType));
+  if (!filings.length) return setError("filings-body", "No matching filings.");
+  const html = `
+    <div class="meta-row">
+      <span>Forms searched: <strong>${OWNERSHIP_FORMS.join(", ")}</strong></span>
+      <span>Showing <strong>${filings.length}</strong> of ${res.value.total?.value ?? filings.length}</span>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Filed</th><th>Form</th><th>Period</th><th>Company</th><th>Accession</th><th>Filing</th>
+      </tr></thead>
+      <tbody>
+        ${filings.map((f) => `
+          <tr>
+            <td>${fmtDate(f.filedAt)}</td>
+            <td><span class="form-pill">${escapeHtml(f.formType || "")}</span></td>
+            <td>${fmtDate(f.periodOfReport)}</td>
+            <td>${escapeHtml(f.companyName) || ""}</td>
+            <td><code style="color:var(--muted);font-size:11px;">${escapeHtml(f.accessionNo) || ""}</code></td>
+            <td>${askEdgarLink(ticker, f.linkToFilingDetails, "Open")}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  document.getElementById("filings-body").innerHTML = html;
+}
+
+// ===================================================================
+// REVIEW QUEUE TAB
+// ===================================================================
+const PIN_KEY = "os-dashboard-pinned-urls";
+const EDITABLE_NUM = ["outstanding_shares", "outstanding_shares_reported", "float", "tradable_float", "affiliate_shares", "restricted_shares", "ads_ratio"];
+const EDITABLE_FIELDS = [...EDITABLE_NUM, "is_adr", "notes"];
+
+let reviewLoadedOnce = false;
+let reviewRowsByUrl = new Map();   // document_url -> row (server values)
+let dirtyByUrl = new Map();        // document_url -> { field: newValue }
+let staleUrls = new Set();         // pinned rows that didn't match the SQL filter
+
+function getPinnedUrls() {
+  try { return new Set(JSON.parse(localStorage.getItem(PIN_KEY) || "[]")); }
+  catch { return new Set(); }
+}
+function setPinnedUrls(s) { localStorage.setItem(PIN_KEY, JSON.stringify([...s])); }
+function pinUrl(u) { const s = getPinnedUrls(); s.add(u); setPinnedUrls(s); }
+function unpinUrl(u) { const s = getPinnedUrls(); s.delete(u); setPinnedUrls(s); }
+
+function chicagoYesterdayISO() {
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" });
+  const today = fmt.format(now); // YYYY-MM-DD
+  const d = new Date(today + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+document.getElementById("review-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  loadReview();
+});
+document.getElementById("review-today").addEventListener("click", () => {
+  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" });
+  document.getElementById("review-date").value = fmt.format(new Date());
+  loadReview();
+});
+document.getElementById("review-yesterday").addEventListener("click", () => {
+  document.getElementById("review-date").value = chicagoYesterdayISO();
+  loadReview();
+});
+
+document.getElementById("review-date").value = chicagoYesterdayISO();
+
+async function loadReview() {
+  reviewLoadedOnce = true;
+  const date = document.getElementById("review-date").value;
+  const summary = document.getElementById("review-summary");
+  const body = document.getElementById("review-body");
+  body.innerHTML = `<div class="status">Loading…</div>`;
+  summary.textContent = "";
+
+  let main, pinned;
+  try {
+    main = await fetch(`/api/review?filed_at=${encodeURIComponent(date)}`).then((r) => r.json());
+    if (main.status !== "success") throw new Error(main?.error?.message || "review failed");
+  } catch (e) {
+    setError("review-body", `Failed to load review queue: ${e.message}`);
+    return;
+  }
+
+  const mainUrls = new Set(main.results.map((r) => r.document_url));
+  const pinnedSet = getPinnedUrls();
+  const missingPinned = [...pinnedSet].filter((u) => !mainUrls.has(u));
+  let pinnedRows = [];
+  if (missingPinned.length) {
+    try {
+      const r = await fetch("/api/review/by-document-urls", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document_urls: missingPinned }),
+      }).then((x) => x.json());
+      pinnedRows = r.results || [];
+    } catch (e) { /* tolerate */ }
+  }
+  staleUrls = new Set(pinnedRows.map((r) => r.document_url));
+
+  const all = [...pinnedRows, ...main.results];
+  reviewRowsByUrl = new Map(all.map((r) => [r.document_url, r]));
+  dirtyByUrl = new Map();
+
+  summary.innerHTML = `<strong>${main.count}</strong> matching · <strong>${pinnedRows.length}</strong> pinned (filter changed) · filed_at <strong>${main.filed_at}</strong>`;
+  renderReviewTable(all);
+}
+
+function renderReviewTable(rows) {
+  if (!rows.length) {
+    document.getElementById("review-body").innerHTML = `<div class="status">No records for this date.</div>`;
+    return;
+  }
+  const html = `
+    <div class="review-table-wrap scroll-x">
+      <table class="review-table">
+        <thead><tr>
+          <th>Ticker / Form</th>
+          <th>Reported</th>
+          <th>Filed</th>
+          <th class="num">OS (raw)</th>
+          <th class="num">OS Reported</th>
+          <th class="num">OS Final</th>
+          <th class="num">Float (raw)</th>
+          <th class="num">Float Final</th>
+          <th class="num">Tradable (raw)</th>
+          <th class="num">Tradable Final</th>
+          <th class="num">Restricted</th>
+          <th class="num">Affiliate</th>
+          <th class="num">ADS Ratio</th>
+          <th>ADR</th>
+          <th>Foreign / Classes</th>
+          <th>Category</th>
+          <th>Details / Prompt</th>
+          <th>Source / Filing</th>
+          <th>Notes</th>
+          <th>Actions</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((r) => renderReviewRow(r)).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+  document.getElementById("review-body").innerHTML = html;
+  attachReviewHandlers();
+}
+
+function renderReviewRow(r) {
+  const url = r.document_url;
+  const stale = staleUrls.has(url);
+  const pinned = getPinnedUrls().has(url);
+  const floatBad = num(r.float_final) != null && num(r.float_final) < 0;
+  const tradBad = num(r.tradable_float_final) != null && num(r.tradable_float_final) < 0;
+  const adsAttr = r.is_adr === true ? "true" : r.is_adr === false ? "false" : "";
+
+  const numInput = (col, val) => {
+    const display = (val == null || val === "") ? "" : (typeof val === "number" ? val : String(val));
+    return `<input type="text" inputmode="decimal" class="editable num" data-url="${escapeHtml(url)}" data-field="${col}" value="${escapeHtml(display)}" />`;
+  };
+
+  return `
+    <tr class="${stale ? "stale-row " : ""}${pinned ? "pinned" : ""}" data-url="${escapeHtml(url)}">
+      <td class="row-key">
+        <strong>${escapeHtml(r.ticker || "")}</strong>
+        ${pinned ? `<span class="badge pin" data-unpin="${escapeHtml(url)}" title="Click to unpin">pinned ✕</span>` : ""}
+        ${stale ? `<span class="badge ins">stale</span>` : ""}
+        <div style="margin-top:4px;"><span class="form-pill">${escapeHtml(r.form_type || "—")}</span></div>
+      </td>
+      <td>${fmtDate(r.date_final)}</td>
+      <td>${fmtDate(r.filed_at)}</td>
+      <td>${numInput("outstanding_shares", r.outstanding_shares)}</td>
+      <td>${numInput("outstanding_shares_reported", r.outstanding_shares_reported)}</td>
+      <td class="num">${fmtInt(r.outstanding_shares_final)}</td>
+      <td>${numInput("float", r.float)}</td>
+      <td class="num ${floatBad ? "bad" : ""}">${fmtInt(r.float_final)}</td>
+      <td>${numInput("tradable_float", r.tradable_float)}</td>
+      <td class="num ${tradBad ? "bad" : ""}">${fmtInt(r.tradable_float_final)}</td>
+      <td>${numInput("restricted_shares", r.restricted_shares)}</td>
+      <td>${numInput("affiliate_shares", r.affiliate_shares)}</td>
+      <td>${numInput("ads_ratio", r.ads_ratio)}</td>
+      <td>
+        <select class="editable" data-url="${escapeHtml(url)}" data-field="is_adr">
+          <option value="" ${adsAttr === "" ? "selected" : ""}>—</option>
+          <option value="true" ${adsAttr === "true" ? "selected" : ""}>Yes</option>
+          <option value="false" ${adsAttr === "false" ? "selected" : ""}>No</option>
+        </select>
+      </td>
+      <td class="note">
+        ${r.foreign_company ? "Foreign · " : ""}${r.number_classes && Number(r.number_classes) > 1 ? `${escapeHtml(r.number_classes)} classes` : ""}
+        ${r.classes_details ? `<div>${escapeHtml(r.classes_details)}</div>` : ""}
+      </td>
+      <td class="note">${escapeHtml(r.category || "")}</td>
+      <td class="note">
+        ${r.details ? `<details class="detail-cell"><summary>Details</summary><div class="body">${escapeHtml(r.details)}</div></details>` : ""}
+        ${r.prompt ? `<details class="detail-cell"><summary>Prompt</summary><div class="body">${escapeHtml(r.prompt)}</div></details>` : ""}
+      </td>
+      <td>
+        ${askEdgarLink(r.ticker, r.document_url, "Filing")}
+        ${r.ownership_source ? `<div>${askEdgarLink(r.ticker, r.ownership_source, "Ownership src")}</div>` : ""}
+      </td>
+      <td>
+        <textarea class="editable notes" data-url="${escapeHtml(url)}" data-field="notes" placeholder="Notes for Jason…">${escapeHtml(r.notes || "")}</textarea>
+      </td>
+      <td>
+        <div class="row-actions">
+          <button class="primary save-btn" data-save="${escapeHtml(url)}" disabled>Save</button>
+          <button class="secondary" data-revert="${escapeHtml(url)}">Revert</button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function attachReviewHandlers() {
+  document.querySelectorAll("#review-body .editable").forEach((el) => {
+    el.addEventListener("input", () => onEditableChange(el));
+    el.addEventListener("change", () => onEditableChange(el));
+  });
+  document.querySelectorAll("#review-body [data-save]").forEach((b) => {
+    b.addEventListener("click", () => saveRow(b.dataset.save));
+  });
+  document.querySelectorAll("#review-body [data-revert]").forEach((b) => {
+    b.addEventListener("click", () => revertRow(b.dataset.revert));
+  });
+  document.querySelectorAll("#review-body [data-unpin]").forEach((b) => {
+    b.addEventListener("click", () => {
+      unpinUrl(b.dataset.unpin);
+      loadReview();
+    });
+  });
+}
+
+function originalValueFor(url, field) {
+  const r = reviewRowsByUrl.get(url);
+  if (!r) return null;
+  return r[field];
+}
+
+function isSameValue(a, b, field) {
+  if (field === "is_adr") {
+    const norm = (v) => v === true ? "true" : v === false ? "false" : (v == null || v === "") ? "" : String(v);
+    return norm(a) === norm(b);
+  }
+  if (field === "notes") {
+    return (a || "") === (b || "");
+  }
+  // numeric
+  const an = num(a), bn = num(b);
+  return an === bn;
+}
+
+function onEditableChange(el) {
+  const url = el.dataset.url;
+  const field = el.dataset.field;
+  const newVal = el.value;
+  const orig = originalValueFor(url, field);
+  const dirty = !isSameValue(newVal, orig, field);
+
+  let bag = dirtyByUrl.get(url) || {};
+  if (dirty) bag[field] = newVal;
+  else delete bag[field];
+  if (Object.keys(bag).length) dirtyByUrl.set(url, bag);
+  else dirtyByUrl.delete(url);
+
+  el.classList.toggle("dirty", dirty);
+
+  // OS sync warning across the row's two OS inputs
+  const row = el.closest("tr");
+  const osEl  = row.querySelector('[data-field="outstanding_shares"]');
+  const orEl  = row.querySelector('[data-field="outstanding_shares_reported"]');
+  const osVal = num(osEl.value);
+  const orVal = num(orEl.value);
+  const mismatch = osVal != null && orVal != null && osVal !== orVal;
+  osEl.classList.toggle("warn", mismatch);
+  orEl.classList.toggle("warn", mismatch);
+  osEl.title = mismatch ? "OS and OS Reported should be equal — update both" : "";
+  orEl.title = mismatch ? "OS and OS Reported should be equal — update both" : "";
+
+  // Save button state
+  const btn = row.querySelector(".save-btn");
+  if (btn) {
+    const hasDirty = dirtyByUrl.has(url);
+    btn.disabled = !hasDirty;
+    btn.classList.toggle("dirty", hasDirty);
+  }
+}
+
+async function saveRow(url) {
+  const updates = dirtyByUrl.get(url);
+  if (!updates) return;
+
+  // OS sync confirm
+  const osNew = ("outstanding_shares" in updates) ? num(updates.outstanding_shares) :
+                num(originalValueFor(url, "outstanding_shares"));
+  const orNew = ("outstanding_shares_reported" in updates) ? num(updates.outstanding_shares_reported) :
+                num(originalValueFor(url, "outstanding_shares_reported"));
+  const touchedOs = ("outstanding_shares" in updates) || ("outstanding_shares_reported" in updates);
+  if (touchedOs && osNew != null && orNew != null && osNew !== orNew) {
+    if (!confirm("Outstanding Shares and Outstanding Shares Reported are not equal. Save anyway?")) return;
+  }
+
+  const payload = { document_url: url, updates: {} };
+  for (const [k, v] of Object.entries(updates)) {
+    if (k === "is_adr") {
+      payload.updates[k] = v === "" ? null : v === "true";
+    } else if (k === "notes") {
+      payload.updates[k] = v === "" ? null : v;
+    } else {
+      const n = num(v);
+      payload.updates[k] = (v === "" || v == null) ? null : n;
+    }
+  }
+
+  try {
+    const res = await fetch("/api/review/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const j = await res.json();
+    if (!res.ok || j.status !== "success") {
+      throw new Error(j?.error?.message || `HTTP ${res.status}`);
+    }
+    // Pin so the row stays visible even if it no longer matches the filter.
+    pinUrl(url);
+    // Update local cache with returned row.
+    reviewRowsByUrl.set(url, j.result);
+    dirtyByUrl.delete(url);
+    toast(`Saved ${j.result.ticker} · ${Object.keys(updates).length} field(s)`);
+    // Re-render that row only.
+    const tr = document.querySelector(`#review-body tr[data-url="${cssEscape(url)}"]`);
+    if (tr) {
+      tr.outerHTML = renderReviewRow(j.result);
+      attachReviewHandlers();
+    }
+  } catch (e) {
+    toast(`Save failed: ${e.message}`, "error");
+  }
+}
+
+function revertRow(url) {
+  dirtyByUrl.delete(url);
+  const r = reviewRowsByUrl.get(url);
+  if (!r) return;
+  const tr = document.querySelector(`#review-body tr[data-url="${cssEscape(url)}"]`);
+  if (tr) {
+    tr.outerHTML = renderReviewRow(r);
+    attachReviewHandlers();
+  }
+}
+
+function cssEscape(s) {
+  if (window.CSS && CSS.escape) return CSS.escape(s);
+  return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => "\\" + c);
+}
+
+// ---------------- bootstrap ----------------
+document.getElementById("search-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  research(document.getElementById("ticker-input").value);
+});
+
+const params = new URLSearchParams(window.location.search);
+const initialTab = params.get("tab");
+if (initialTab === "review") {
+  document.querySelector('.tab[data-tab="review"]').click();
+}
+const initialTicker = params.get("ticker");
+if (initialTicker) {
+  document.getElementById("ticker-input").value = initialTicker.toUpperCase();
+  research(initialTicker);
+}
+</script>
+
+</body>
+</html>
