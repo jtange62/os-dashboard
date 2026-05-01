@@ -799,7 +799,14 @@ function renderOwnership(ticker, res, splitsRes) {
 
   const totalOSraw = num(owners[0]?.outstanding_shares_final);
   const totalOSadj = totalOSraw != null ? totalOSraw * factor : null;
-  const sumField = (field) => owners.reduce((s, o) => s + (num(o[field]) || 0), 0);
+  // Excludes "Investor" types (e.g. "5-10 Percent Investor", "10+ Percent Investor")
+  // so the total approximates affiliate holdings the analyst is cross-checking.
+  const isInvestor = (o) => {
+    const t = (o.owner_type || "").toLowerCase();
+    return t.includes("investor") || t.includes("10+");
+  };
+  const nonInvestorOwners = owners.filter((o) => !isInvestor(o));
+  const sumField = (field) => nonInvestorOwners.reduce((s, o) => s + (num(o[field]) || 0), 0);
   const totals = {
     common:        sumField("common_shares_amount"),
     preferred:     sumField("preferred_shares_amount"),
@@ -821,7 +828,7 @@ function renderOwnership(ticker, res, splitsRes) {
       <span>Reported: <strong>${fmtDate(latest.reported_date)}</strong></span>
       <span>Owners listed: <strong>${owners.length}</strong></span>
       ${totalOSraw ? `<span>Outstanding ${factor !== 1 ? "(adjusted)" : "(per filing)"}: <strong>${fmtInt(totalOSadj)}</strong>${factor !== 1 ? ` <span class="sub" style="color:var(--muted);">raw: ${fmtInt(totalOSraw)}</span>` : ""}</span>` : ""}
-      <span>Sum of common ${factor !== 1 ? "(adjusted)" : ""}: <strong>${fmtInt(totalCommonAdj)}</strong>${totalOSadj ? ` (${((totalCommonAdj / totalOSadj) * 100).toFixed(2)}%)` : ""}</span>
+      <span>Sum of common · non-investor only ${factor !== 1 ? "(adjusted)" : ""}: <strong>${fmtInt(totalCommonAdj)}</strong>${totalOSadj ? ` (${((totalCommonAdj / totalOSadj) * 100).toFixed(2)}%)` : ""}</span>
       ${splitNote}
     </div>
     <table>
@@ -861,7 +868,7 @@ function renderOwnership(ticker, res, splitsRes) {
       </tbody>
       <tfoot>
         <tr style="font-weight:600;background:var(--bg);">
-          <td colspan="3">Total (${owners.length} owners)</td>
+          <td colspan="3" title="Excludes 'Investor' owner types">Total non-investor (${nonInvestorOwners.length} of ${owners.length})</td>
           ${adjustedCell(totals.common, factor)}
           <td class="num">${totalCommonPct == null ? "—" : totalCommonPct.toFixed(2) + "%"}</td>
           ${adjustedCell(totals.preferred, factor)}
