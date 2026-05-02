@@ -481,9 +481,13 @@
         <div class="meta" id="panel-subtitle"></div>
       </div>
       <div class="row-actions">
+        <button type="button" class="close-btn" id="panel-prev" title="Previous (k / ↑)" aria-label="Previous row">↑</button>
+        <span id="panel-position" class="status" style="font-size:11px;min-width:54px;text-align:center;"></span>
+        <button type="button" class="close-btn" id="panel-next" title="Next (j / ↓)" aria-label="Next row">↓</button>
+        <span style="width:8px;"></span>
         <button type="button" class="primary save-btn" id="panel-save" disabled>Save</button>
         <button type="button" class="secondary" id="panel-revert">Revert</button>
-        <button type="button" class="close-btn" data-panel-close title="Close (Esc)">×</button>
+        <button type="button" class="close-btn" data-panel-close title="Close (Esc)" aria-label="Close panel">×</button>
       </div>
     </div>
     <div id="panel-content"></div>
@@ -1597,7 +1601,30 @@ function renderReviewPanel(r) {
     el.addEventListener("change", () => onEditableChange(el));
   });
 
+  // Position indicator + nav button state.
+  const urls = [...reviewRowsByUrl.keys()];
+  const idx = urls.indexOf(url);
+  document.getElementById("panel-position").textContent = idx >= 0 ? `${idx + 1} / ${urls.length}` : "";
+  document.getElementById("panel-prev").disabled = idx <= 0;
+  document.getElementById("panel-next").disabled = idx < 0 || idx >= urls.length - 1;
+
   updateSaveButtonsFor(url);
+  // scroll the panel back to top when the row changes
+  document.querySelector("#review-panel .panel-card").scrollTop = 0;
+}
+
+function panelNavigate(delta) {
+  const panel = document.getElementById("review-panel");
+  const url = panel.dataset.url;
+  if (!url) return;
+  const urls = [...reviewRowsByUrl.keys()];
+  const i = urls.indexOf(url);
+  if (i < 0) return;
+  const next = i + delta;
+  if (next < 0 || next >= urls.length) return;
+  openReviewPanel(urls[next]);
+  const tr = document.querySelector(`#review-body tr[data-url="${cssEscape(urls[next])}"]`);
+  if (tr) tr.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 document.getElementById("panel-save").addEventListener("click", () => {
@@ -1608,13 +1635,18 @@ document.getElementById("panel-revert").addEventListener("click", () => {
   const url = document.getElementById("review-panel").dataset.url;
   if (url) revertRow(url);
 });
+document.getElementById("panel-prev").addEventListener("click", () => panelNavigate(-1));
+document.getElementById("panel-next").addEventListener("click", () => panelNavigate(1));
 document.querySelectorAll("[data-panel-close]").forEach((el) => {
   el.addEventListener("click", closeReviewPanel);
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && document.getElementById("review-panel").classList.contains("open")) {
-    closeReviewPanel();
-  }
+  if (!document.getElementById("review-panel").classList.contains("open")) return;
+  if (e.key === "Escape") { closeReviewPanel(); return; }
+  // don't hijack typing or cursor movement inside inputs
+  if (e.target.matches("input, textarea, select")) return;
+  if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); panelNavigate(1); }
+  if (e.key === "k" || e.key === "ArrowUp")   { e.preventDefault(); panelNavigate(-1); }
 });
 
 // ---------------- bootstrap ----------------
