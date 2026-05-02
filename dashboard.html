@@ -242,6 +242,7 @@
   .review-table { font-size: 12px; }
   .review-table th { font-size: 10px; }
   .review-table td { padding: 6px 8px; }
+  .review-table tbody tr { cursor: pointer; }
   .review-table td.row-key {
     background: var(--panel);
     border-right: 1px solid var(--border);
@@ -251,6 +252,8 @@
     min-width: 130px;
   }
   .review-table tr:hover td.row-key { background: var(--panel-2); }
+  .review-table tr.active td { background: rgba(88,166,255,0.06); }
+  .review-table tr.active td.row-key { background: rgba(88,166,255,0.10); border-left: 2px solid var(--accent); }
   .review-table tr.pinned td.row-key {
     border-left: 2px solid var(--accent);
   }
@@ -261,6 +264,114 @@
     background: var(--accent);
     color: #0d1117;
   }
+  .review-table .editable.notes {
+    width: 200px;
+    min-height: 32px;
+    max-height: 60px;
+    resize: none;
+    overflow: auto;
+  }
+
+  /* Detail panel */
+  .review-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: none;
+  }
+  .review-panel.open { display: block; }
+  .panel-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    cursor: pointer;
+  }
+  .panel-card {
+    position: absolute;
+    right: 0; top: 0; bottom: 0;
+    width: 560px;
+    max-width: 95vw;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 0;
+    box-shadow: -8px 0 24px rgba(0,0,0,0.4);
+  }
+  .panel-header {
+    position: sticky; top: 0;
+    background: var(--panel);
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid var(--border);
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .panel-header h3 { margin: 0; font-size: 15px; font-weight: 600; }
+  .panel-header .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .panel-section {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-section:last-child { border-bottom: none; }
+  .panel-section h4 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+  }
+  .panel-grid {
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    gap: 8px 12px;
+    align-items: center;
+  }
+  .panel-grid > .label {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .panel-grid > .value {
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    word-break: break-word;
+  }
+  .panel-grid > .value.bad { color: var(--red); font-weight: 600; }
+  .panel-grid input.editable,
+  .panel-grid select.editable,
+  .panel-grid textarea.editable {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .panel-grid textarea.editable {
+    width: 100%;
+    min-height: 90px;
+    max-height: 240px;
+    resize: vertical;
+  }
+  .panel-longtext {
+    white-space: pre-wrap;
+    background: var(--bg);
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 12px;
+    max-height: 200px;
+    overflow: auto;
+  }
+  .close-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 4px;
+    width: 28px; height: 28px;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+  }
+  .close-btn:hover { color: var(--text); border-color: var(--accent); }
 
   details.detail-cell { font-size: 11px; }
   details.detail-cell summary {
@@ -360,6 +471,24 @@
 </div>
 
 </main>
+
+<aside id="review-panel" class="review-panel" aria-hidden="true">
+  <div class="panel-backdrop" data-panel-close></div>
+  <div class="panel-card">
+    <div class="panel-header">
+      <div>
+        <h3 id="panel-title">—</h3>
+        <div class="meta" id="panel-subtitle"></div>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="primary save-btn" id="panel-save" disabled>Save</button>
+        <button type="button" class="secondary" id="panel-revert">Revert</button>
+        <button type="button" class="close-btn" data-panel-close title="Close (Esc)">×</button>
+      </div>
+    </div>
+    <div id="panel-content"></div>
+  </div>
+</aside>
 
 <div id="toast" style="display:none;" class="toast"></div>
 
@@ -1154,17 +1283,27 @@ function attachReviewHandlers() {
   document.querySelectorAll("#review-body .editable").forEach((el) => {
     el.addEventListener("input", () => onEditableChange(el));
     el.addEventListener("change", () => onEditableChange(el));
+    // stop click propagation so editing doesn't open the panel
+    el.addEventListener("click", (e) => e.stopPropagation());
+    el.addEventListener("mousedown", (e) => e.stopPropagation());
   });
   document.querySelectorAll("#review-body [data-save]").forEach((b) => {
-    b.addEventListener("click", () => saveRow(b.dataset.save));
+    b.addEventListener("click", (e) => { e.stopPropagation(); saveRow(b.dataset.save); });
   });
   document.querySelectorAll("#review-body [data-revert]").forEach((b) => {
-    b.addEventListener("click", () => revertRow(b.dataset.revert));
+    b.addEventListener("click", (e) => { e.stopPropagation(); revertRow(b.dataset.revert); });
   });
   document.querySelectorAll("#review-body [data-unpin]").forEach((b) => {
-    b.addEventListener("click", () => {
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
       unpinUrl(b.dataset.unpin);
       loadReview();
+    });
+  });
+  document.querySelectorAll("#review-body tbody tr[data-url]").forEach((tr) => {
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest("input, textarea, select, button, a, .badge, summary")) return;
+      openReviewPanel(tr.dataset.url);
     });
   });
 }
@@ -1188,10 +1327,24 @@ function isSameValue(a, b, field) {
   return an === bn;
 }
 
+// Find every editable input for (url, field) — there can be one in the row
+// AND one in the detail panel; we keep them in sync.
+function inputsFor(url, field) {
+  const sel = `.editable[data-url="${cssEscape(url)}"][data-field="${field}"]`;
+  return document.querySelectorAll(sel);
+}
+
 function onEditableChange(el) {
   const url = el.dataset.url;
   const field = el.dataset.field;
   const newVal = el.value;
+
+  // 1. Sync sibling inputs (row <-> panel)
+  inputsFor(url, field).forEach((other) => {
+    if (other !== el && other.value !== newVal) other.value = newVal;
+  });
+
+  // 2. Compute dirty state vs. server-cached row
   const orig = originalValueFor(url, field);
   const dirty = !isSameValue(newVal, orig, field);
 
@@ -1201,26 +1354,34 @@ function onEditableChange(el) {
   if (Object.keys(bag).length) dirtyByUrl.set(url, bag);
   else dirtyByUrl.delete(url);
 
-  el.classList.toggle("dirty", dirty);
+  // 3. Apply dirty class to all siblings (row + panel)
+  inputsFor(url, field).forEach((e) => e.classList.toggle("dirty", dirty));
 
-  // OS sync warning across the row's two OS inputs
-  const row = el.closest("tr");
-  const osEl  = row.querySelector('[data-field="outstanding_shares"]');
-  const orEl  = row.querySelector('[data-field="outstanding_shares_reported"]');
-  const osVal = num(osEl.value);
-  const orVal = num(orEl.value);
+  // 4. OS sync warning across BOTH OS fields wherever they're rendered
+  const osVal = num(inputsFor(url, "outstanding_shares")[0]?.value);
+  const orVal = num(inputsFor(url, "outstanding_shares_reported")[0]?.value);
   const mismatch = osVal != null && orVal != null && osVal !== orVal;
-  osEl.classList.toggle("warn", mismatch);
-  orEl.classList.toggle("warn", mismatch);
-  osEl.title = mismatch ? "OS and OS Reported should be equal — update both" : "";
-  orEl.title = mismatch ? "OS and OS Reported should be equal — update both" : "";
+  const tip = mismatch ? "OS and OS Reported should be equal — update both" : "";
+  for (const f of ["outstanding_shares", "outstanding_shares_reported"]) {
+    inputsFor(url, f).forEach((e) => { e.classList.toggle("warn", mismatch); e.title = tip; });
+  }
 
-  // Save button state
-  const btn = row.querySelector(".save-btn");
-  if (btn) {
-    const hasDirty = dirtyByUrl.has(url);
-    btn.disabled = !hasDirty;
-    btn.classList.toggle("dirty", hasDirty);
+  // 5. Update save buttons (row + panel if it's showing this URL)
+  updateSaveButtonsFor(url);
+}
+
+function updateSaveButtonsFor(url) {
+  const hasDirty = dirtyByUrl.has(url);
+  const rowBtn = document.querySelector(`[data-save="${cssEscape(url)}"]`);
+  if (rowBtn) {
+    rowBtn.disabled = !hasDirty;
+    rowBtn.classList.toggle("dirty", hasDirty);
+  }
+  const panel = document.getElementById("review-panel");
+  if (panel.classList.contains("open") && panel.dataset.url === url) {
+    const panelBtn = document.getElementById("panel-save");
+    panelBtn.disabled = !hasDirty;
+    panelBtn.classList.toggle("dirty", hasDirty);
   }
 }
 
@@ -1272,6 +1433,11 @@ async function saveRow(url) {
       tr.outerHTML = renderReviewRow(j.result);
       attachReviewHandlers();
     }
+    // Refresh open panel if it's showing this URL.
+    const panel = document.getElementById("review-panel");
+    if (panel.classList.contains("open") && panel.dataset.url === url) {
+      renderReviewPanel(j.result);
+    }
   } catch (e) {
     toast(`Save failed: ${e.message}`, "error");
   }
@@ -1286,12 +1452,170 @@ function revertRow(url) {
     tr.outerHTML = renderReviewRow(r);
     attachReviewHandlers();
   }
+  const panel = document.getElementById("review-panel");
+  if (panel.classList.contains("open") && panel.dataset.url === url) {
+    renderReviewPanel(r);
+  }
 }
 
 function cssEscape(s) {
   if (window.CSS && CSS.escape) return CSS.escape(s);
   return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => "\\" + c);
 }
+
+// ---------------- review detail panel ----------------
+function openReviewPanel(url) {
+  const r = reviewRowsByUrl.get(url);
+  if (!r) return;
+  const panel = document.getElementById("review-panel");
+  panel.classList.add("open");
+  panel.dataset.url = url;
+  panel.setAttribute("aria-hidden", "false");
+  // highlight the active row in the table
+  document.querySelectorAll("#review-body tr.active").forEach((tr) => tr.classList.remove("active"));
+  const tr = document.querySelector(`#review-body tr[data-url="${cssEscape(url)}"]`);
+  if (tr) tr.classList.add("active");
+  renderReviewPanel(r);
+}
+
+function closeReviewPanel() {
+  const panel = document.getElementById("review-panel");
+  panel.classList.remove("open");
+  panel.removeAttribute("data-url");
+  panel.setAttribute("aria-hidden", "true");
+  document.querySelectorAll("#review-body tr.active").forEach((tr) => tr.classList.remove("active"));
+}
+
+function renderReviewPanel(r) {
+  const url = r.document_url;
+  const floatBad = num(r.float_final) != null && num(r.float_final) < 0;
+  const tradBad  = num(r.tradable_float_final) != null && num(r.tradable_float_final) < 0;
+  const adsAttr = r.is_adr === true ? "true" : r.is_adr === false ? "false" : "";
+
+  document.getElementById("panel-title").innerHTML =
+    `<strong>${escapeHtml(r.ticker || "—")}</strong> &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`;
+  document.getElementById("panel-subtitle").textContent =
+    `Reported ${fmtDate(r.date_final)} · Filed ${fmtDate(r.filed_at)}`;
+
+  const numInput = (col, val) => {
+    const display = (val == null || val === "") ? "" : String(val);
+    return `<input type="text" inputmode="decimal" class="editable num" data-url="${escapeHtml(url)}" data-field="${col}" value="${escapeHtml(display)}" />`;
+  };
+
+  const flags = [];
+  if (r.foreign_company) flags.push('Foreign');
+  if (r.is_adr === true) flags.push('ADR');
+  if (r.number_classes && Number(r.number_classes) > 1) flags.push(`${escapeHtml(r.number_classes)} classes`);
+
+  const html = `
+    <div class="panel-section">
+      <h4>Source filing</h4>
+      <div class="panel-grid">
+        <div class="label">Document</div>
+        <div class="value">${askEdgarLink(r.ticker, r.document_url, "Open filing")}</div>
+        <div class="label">Ownership src</div>
+        <div class="value">${r.ownership_source ? askEdgarLink(r.ticker, r.ownership_source, "Open ownership source") : "—"}</div>
+        <div class="label">Filed at</div>
+        <div class="value">${fmtDate(r.filed_at)}</div>
+        <div class="label">Reported (date_final)</div>
+        <div class="value">${fmtDate(r.date_final)}</div>
+        <div class="label">Category</div>
+        <div class="value" style="white-space:pre-wrap;">${escapeHtml(r.category || "—")}</div>
+        <div class="label">Flags</div>
+        <div class="value">${flags.length ? flags.map(f => `<span class="badge ins">${f}</span>`).join(" ") : "—"}</div>
+        ${r.classes_details ? `<div class="label">Classes</div><div class="value">${escapeHtml(r.classes_details)}</div>` : ""}
+        <div class="label">Market cap</div>
+        <div class="value">${r.market_cap ? "$" + fmtInt(r.market_cap) : "—"}</div>
+        <div class="label">Last DB update</div>
+        <div class="value">${fmtDateTime(r.updated_at)}</div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <h4>Computed (read-only)</h4>
+      <div class="panel-grid">
+        <div class="label">OS Final</div>
+        <div class="value">${fmtInt(r.outstanding_shares_final)}</div>
+        <div class="label">Float Final</div>
+        <div class="value ${floatBad ? "bad" : ""}">${fmtInt(r.float_final)}${floatBad ? " · NEGATIVE" : ""}</div>
+        <div class="label">Tradable Final</div>
+        <div class="value ${tradBad ? "bad" : ""}">${fmtInt(r.tradable_float_final)}${tradBad ? " · NEGATIVE" : ""}</div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <h4>Editable</h4>
+      <div class="panel-grid">
+        <div class="label">Outstanding (raw)</div>
+        <div>${numInput("outstanding_shares", r.outstanding_shares)}</div>
+        <div class="label">OS Reported</div>
+        <div>${numInput("outstanding_shares_reported", r.outstanding_shares_reported)}</div>
+        <div class="label">Float (raw)</div>
+        <div>${numInput("float", r.float)}</div>
+        <div class="label">Tradable (raw)</div>
+        <div>${numInput("tradable_float", r.tradable_float)}</div>
+        <div class="label">Restricted</div>
+        <div>${numInput("restricted_shares", r.restricted_shares)}</div>
+        <div class="label">Affiliate</div>
+        <div>${numInput("affiliate_shares", r.affiliate_shares)}</div>
+        <div class="label">ADS Ratio</div>
+        <div>${numInput("ads_ratio", r.ads_ratio)}</div>
+        <div class="label">ADR</div>
+        <div>
+          <select class="editable" data-url="${escapeHtml(url)}" data-field="is_adr">
+            <option value="" ${adsAttr === "" ? "selected" : ""}>—</option>
+            <option value="true" ${adsAttr === "true" ? "selected" : ""}>Yes</option>
+            <option value="false" ${adsAttr === "false" ? "selected" : ""}>No</option>
+          </select>
+        </div>
+        <div class="label">Notes</div>
+        <div>
+          <textarea class="editable notes" data-url="${escapeHtml(url)}" data-field="notes" placeholder="Notes for Jason…">${escapeHtml(r.notes || "")}</textarea>
+        </div>
+      </div>
+    </div>
+
+    ${r.details ? `<div class="panel-section"><h4>Details</h4><div class="panel-longtext">${escapeHtml(r.details)}</div></div>` : ""}
+    ${r.prompt ? `<div class="panel-section"><h4>Prompt</h4><div class="panel-longtext">${escapeHtml(r.prompt)}</div></div>` : ""}
+  `;
+
+  const content = document.getElementById("panel-content");
+  content.innerHTML = html;
+
+  // Apply any unsaved changes from dirtyByUrl to the panel inputs.
+  const bag = dirtyByUrl.get(url) || {};
+  for (const [field, val] of Object.entries(bag)) {
+    inputsFor(url, field).forEach((el) => {
+      el.value = val;
+      el.classList.add("dirty");
+    });
+  }
+
+  // Wire panel inputs to the same change pipeline.
+  content.querySelectorAll(".editable").forEach((el) => {
+    el.addEventListener("input", () => onEditableChange(el));
+    el.addEventListener("change", () => onEditableChange(el));
+  });
+
+  updateSaveButtonsFor(url);
+}
+
+document.getElementById("panel-save").addEventListener("click", () => {
+  const url = document.getElementById("review-panel").dataset.url;
+  if (url) saveRow(url);
+});
+document.getElementById("panel-revert").addEventListener("click", () => {
+  const url = document.getElementById("review-panel").dataset.url;
+  if (url) revertRow(url);
+});
+document.querySelectorAll("[data-panel-close]").forEach((el) => {
+  el.addEventListener("click", closeReviewPanel);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && document.getElementById("review-panel").classList.contains("open")) {
+    closeReviewPanel();
+  }
+});
 
 // ---------------- bootstrap ----------------
 document.getElementById("search-form").addEventListener("submit", (e) => {
