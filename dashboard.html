@@ -323,33 +323,60 @@
     letter-spacing: 0.5px;
     font-weight: 600;
   }
-  .panel-grid {
+  .panel-fields {
     display: grid;
     grid-template-columns: 150px 1fr;
     gap: 8px 12px;
     align-items: center;
   }
-  .panel-grid > .label {
+  .panel-fields > .label {
     color: var(--muted);
     font-size: 12px;
   }
-  .panel-grid > .value {
+  .panel-fields > .value {
     font-size: 13px;
     font-variant-numeric: tabular-nums;
     word-break: break-word;
   }
-  .panel-grid > .value.bad { color: var(--red); font-weight: 600; }
-  .panel-grid input.editable,
-  .panel-grid select.editable,
-  .panel-grid textarea.editable {
+  .panel-fields > .value.bad { color: var(--red); font-weight: 600; }
+  .panel-fields input.editable,
+  .panel-fields select.editable,
+  .panel-fields textarea.editable {
     width: 100%;
     box-sizing: border-box;
   }
-  .panel-grid textarea.editable {
+  .panel-fields textarea.editable {
     width: 100%;
     min-height: 90px;
     max-height: 240px;
     resize: vertical;
+  }
+
+  /* Dilution research quick-links next to ticker */
+  .dl-icons {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .dl-icons a {
+    display: inline-block;
+    padding: 1px 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    color: var(--accent);
+    text-decoration: none;
+    line-height: 1.4;
+  }
+  .dl-icons a:hover {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+    text-decoration: none;
   }
   .panel-longtext {
     white-space: pre-wrap;
@@ -533,6 +560,16 @@ function askEdgarLink(ticker, filingUrl, label) {
   return `<a href="${url}" target="_blank" rel="noopener">${escapeHtml(label || "Open")}</a>`;
 }
 
+// External research quick-links rendered next to a ticker. DT = DilutionTracker, AE = AskEdgar dilution.
+function dilutionLinks(ticker) {
+  if (!ticker) return "";
+  const t = encodeURIComponent(ticker);
+  return `<span class="dl-icons" onclick="event.stopPropagation()">
+    <a href="https://dilutiontracker.com/app/search/${t}?a=ps7ydb" target="_blank" rel="noopener" title="Open ${escapeHtml(ticker)} on DilutionTracker">DT</a>
+    <a href="https://app.askedgar.io/ticker/${t}/dilution" target="_blank" rel="noopener" title="Open ${escapeHtml(ticker)} on AskEdgar (dilution)">AE</a>
+  </span>`;
+}
+
 function setStatus(id, msg) { document.getElementById(id).innerHTML = `<div class="status">${msg}</div>`; }
 function setError(id, msg)  { document.getElementById(id).innerHTML = `<div class="error">${escapeHtml(msg)}</div>`; }
 
@@ -698,7 +735,7 @@ function renderSnapshot(r) {
   const tradBad = tradVal != null && tradVal < 0;
 
   const cards = [
-    { label: "Ticker", value: escapeHtml(r.ticker || ""), sub: r.cik ? `CIK ${escapeHtml(r.cik)}` : (r.classes_details ? escapeHtml(r.classes_details) : "") },
+    { label: "Ticker", value: `${escapeHtml(r.ticker || "")} ${dilutionLinks(r.ticker)}`, sub: r.cik ? `CIK ${escapeHtml(r.cik)}` : (r.classes_details ? escapeHtml(r.classes_details) : "") },
     { label: "Outstanding", value: fmtInt(r.outstanding_shares) },
     { label: "Float", value: fmtInt(r.float), valueCls: floatBad ? " bad" : "", sub: floatBad ? "NEGATIVE" : `Tradable: ${fmtInt(r.tradable_float)}` },
     { label: "Tradable Float", value: fmtInt(r.tradable_float), valueCls: tradBad ? " bad" : "", sub: tradBad ? "NEGATIVE" : "" },
@@ -1234,6 +1271,7 @@ function renderReviewRow(r) {
     <tr class="${stale ? "stale-row " : ""}${pinned ? "pinned" : ""}" data-url="${escapeHtml(url)}">
       <td class="row-key">
         <strong>${escapeHtml(r.ticker || "")}</strong>
+        ${dilutionLinks(r.ticker)}
         ${pinned ? `<span class="badge pin" data-unpin="${escapeHtml(url)}" title="Click to unpin">pinned ✕</span>` : ""}
         ${stale ? `<span class="badge ins">stale</span>` : ""}
         <div style="margin-top:4px;"><span class="form-pill">${escapeHtml(r.form_type || "—")}</span></div>
@@ -1497,7 +1535,7 @@ function renderReviewPanel(r) {
   const adsAttr = r.is_adr === true ? "true" : r.is_adr === false ? "false" : "";
 
   document.getElementById("panel-title").innerHTML =
-    `<strong>${escapeHtml(r.ticker || "—")}</strong> &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`;
+    `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`;
   document.getElementById("panel-subtitle").textContent =
     `Reported ${fmtDate(r.date_final)} · Filed ${fmtDate(r.filed_at)}`;
 
@@ -1514,7 +1552,7 @@ function renderReviewPanel(r) {
   const html = `
     <div class="panel-section">
       <h4>Source filing</h4>
-      <div class="panel-grid">
+      <div class="panel-fields">
         <div class="label">Document</div>
         <div class="value">${askEdgarLink(r.ticker, r.document_url, "Open filing")}</div>
         <div class="label">Ownership src</div>
@@ -1537,7 +1575,7 @@ function renderReviewPanel(r) {
 
     <div class="panel-section">
       <h4>Computed (read-only)</h4>
-      <div class="panel-grid">
+      <div class="panel-fields">
         <div class="label">OS Final</div>
         <div class="value">${fmtInt(r.outstanding_shares_final)}</div>
         <div class="label">Float Final</div>
@@ -1549,7 +1587,7 @@ function renderReviewPanel(r) {
 
     <div class="panel-section">
       <h4>Editable</h4>
-      <div class="panel-grid">
+      <div class="panel-fields">
         <div class="label">Outstanding (raw)</div>
         <div>${numInput("outstanding_shares", r.outstanding_shares)}</div>
         <div class="label">OS Reported</div>
