@@ -590,8 +590,10 @@ function askEdgarLink(ticker, filingUrl, label) {
 }
 
 // Quick-links rendered next to a ticker.
-//   DT = DilutionTracker (external), AE = AskEdgar dilution (external),
-//   RQ = jump to Review Queue ticker mode (internal).
+//   DT = DilutionTracker (external)
+//   AE = AskEdgar dilution (external)
+//   RP = Research Page in this dashboard (new browser tab)
+//   RQ = jump to Review Queue ticker mode (same tab)
 function dilutionLinks(ticker) {
   if (!ticker) return "";
   const t = encodeURIComponent(ticker);
@@ -599,6 +601,7 @@ function dilutionLinks(ticker) {
   return `<span class="dl-icons" onclick="event.stopPropagation()">
     <a href="https://dilutiontracker.com/app/search/${t}?a=ps7ydb" target="_blank" rel="noopener" title="Open ${e} on DilutionTracker">DT</a>
     <a href="https://app.askedgar.io/ticker/${t}/dilution" target="_blank" rel="noopener" title="Open ${e} on AskEdgar (dilution)">AE</a>
+    <a href="/?ticker=${t}" target="_blank" rel="noopener" title="Open ${e} in the Research tab (new browser tab)">RP</a>
     <a href="?tab=review&rmode=ticker&rt=${t}" onclick="openReviewByTicker('${e}'); return false;" title="Open ${e} in Review Queue (full history)">RQ</a>
   </span>`;
 }
