@@ -1531,16 +1531,19 @@ function onEditableChange(el) {
 
 function updateSaveButtonsFor(q, id) {
   const hasDirty = q.dirty.has(Number(id));
+  const tip = hasDirty ? "" : "No unsaved changes";
   const rowBtn = document.querySelector(`[data-queue="${q.key}"][data-save="${id}"]`);
   if (rowBtn) {
     rowBtn.disabled = !hasDirty;
     rowBtn.classList.toggle("dirty", hasDirty);
+    rowBtn.title = tip;
   }
   const panel = document.getElementById("review-panel");
   if (panel.classList.contains("open") && panel.dataset.queue === q.key && Number(panel.dataset.id) === Number(id)) {
     const panelBtn = document.getElementById("panel-save");
     panelBtn.disabled = !hasDirty;
     panelBtn.classList.toggle("dirty", hasDirty);
+    panelBtn.title = tip;
   }
 }
 
