@@ -1,0 +1,2032 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Offerings Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c232b;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --red-bg: rgba(248, 81, 73, 0.12);
+    --yellow: #d29922;
+    --yellow-bg: rgba(210, 153, 34, 0.12);
+    --orange: #f0883e;
+    --orange-bg: rgba(240, 136, 62, 0.12);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 14px/1.5 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 24px 0;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+  .header-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 8px;
+  }
+  header h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0.4px; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  .tabs { display: flex; gap: 0; }
+  .tab {
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 10px 16px;
+    font: inherit;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  form.search { display: flex; gap: 8px; margin-left: auto; }
+  input[type=text], input[type=date], input[type=number], textarea, select {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  input[type=text].ticker-search { width: 220px; text-transform: uppercase; letter-spacing: 0.5px; }
+  input:focus, textarea:focus, select:focus { border-color: var(--accent); outline: none; }
+  button.primary, button.secondary {
+    border: none;
+    border-radius: 6px;
+    padding: 7px 14px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  button.primary { background: var(--accent); color: #0d1117; }
+  button.primary:hover { background: #79b8ff; }
+  button.secondary {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  button.secondary:hover { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  main { max-width: 1680px; margin: 0 auto; padding: 20px 24px 60px; }
+  .panel-grid { display: grid; gap: 18px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+  }
+  section h2 {
+    margin: 0 0 14px;
+    font-size: 13px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    font-weight: 600;
+  }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+  .card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
+  .card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .card .value { font-size: 20px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .card .value.small { font-size: 14px; }
+  .card .sub { color: var(--muted); font-size: 11px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .card .value.high { color: var(--orange); }
+  .card .value.warn { color: var(--yellow); }
+  .card .value.bad  { color: var(--red); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th {
+    text-align: left;
+    color: var(--muted);
+    font-weight: 500;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    background: var(--panel);
+    position: sticky; top: 0; z-index: 1;
+  }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:hover td { background: var(--panel-2); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.bad  { color: var(--red); background: var(--red-bg); font-weight: 600; }
+  td.warn { color: var(--yellow); background: var(--yellow-bg); }
+  td.note { font-size: 11px; color: var(--muted); }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .status { color: var(--muted); padding: 8px 0; font-size: 13px; }
+  .error {
+    color: var(--red);
+    padding: 10px 12px;
+    background: var(--red-bg);
+    border: 1px solid rgba(248, 81, 73, 0.3);
+    border-radius: 6px;
+    font-size: 13px;
+  }
+
+  .form-pill {
+    display: inline-block;
+    padding: 1px 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    margin-left: 4px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .badge.aff  { background: var(--orange-bg); color: var(--orange); }
+  .badge.ins  { background: var(--yellow-bg); color: var(--yellow); }
+  .badge.exec { background: rgba(88, 166, 255, 0.15); color: var(--accent); }
+  .badge.bad  { background: var(--red-bg); color: var(--red); }
+  .badge.ok   { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+  .badge.pin  { background: rgba(88, 166, 255, 0.15); color: var(--accent); cursor: pointer; }
+  .badge.done { background: rgba(63, 185, 80, 0.18); color: var(--green); }
+  .badge.todo { background: var(--orange-bg); color: var(--orange); }
+
+  .scroll { max-height: 560px; overflow: auto; }
+  .scroll-x { overflow-x: auto; }
+
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 10px;
+  }
+  .meta-row strong { color: var(--text); }
+
+  /* Editable cells */
+  .editable {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-family: inherit;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    width: 110px;
+  }
+  .editable:focus { border-color: var(--accent); outline: none; }
+  .editable.dirty {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .editable.warn { border-color: var(--yellow); background: var(--yellow-bg); }
+  .editable.num { text-align: right; }
+  .editable.text-short { width: 130px; text-align: left; font-variant-numeric: normal; }
+  .editable.text-mid { width: 180px; text-align: left; font-variant-numeric: normal; }
+  .editable.text-long {
+    width: 240px;
+    min-height: 32px;
+    max-height: 60px;
+    resize: none;
+    overflow: auto;
+    text-align: left;
+    font-family: inherit;
+    font-variant-numeric: normal;
+  }
+  select.editable { width: auto; }
+
+  .row-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-wrap: wrap;
+    white-space: nowrap;
+  }
+  .row-actions button { padding: 3px 8px; font-size: 11px; }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  .review-table-wrap {
+    max-height: 75vh;
+    overflow: auto;
+  }
+  .review-table { font-size: 12px; }
+  .review-table th { font-size: 10px; }
+  .review-table td { padding: 6px 8px; }
+  .review-table tbody tr { cursor: pointer; }
+  .review-table td.row-key {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    min-width: 130px;
+  }
+  .review-table tr:hover td.row-key { background: var(--panel-2); }
+  .review-table tr.active td { background: rgba(88,166,255,0.06); }
+  .review-table tr.active td.row-key { background: rgba(88,166,255,0.10); border-left: 2px solid var(--accent); }
+  .review-table tr.pinned td.row-key {
+    border-left: 2px solid var(--accent);
+  }
+  .stale-row td {
+    opacity: 0.55;
+  }
+  .save-btn.dirty {
+    background: var(--accent);
+    color: #0d1117;
+  }
+  .mode-btn {
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    padding: 7px 14px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    border-radius: 0;
+  }
+  .mode-btn + .mode-btn { border-left: 1px solid var(--border); }
+  .mode-btn:hover { color: var(--text); }
+  .mode-btn.active { background: var(--accent); color: #0d1117; }
+
+  /* Sub-tab strip inside Review Queue */
+  .subtabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+  .subtab {
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 8px 14px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    margin-bottom: -1px;
+  }
+  .subtab:hover { color: var(--text); }
+  .subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Detail / news side panel */
+  .side-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: none;
+  }
+  .side-panel.open { display: block; }
+  .panel-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    cursor: pointer;
+  }
+  .panel-card {
+    position: absolute;
+    right: 0; top: 0; bottom: 0;
+    width: 620px;
+    max-width: 95vw;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 0;
+    box-shadow: -8px 0 24px rgba(0,0,0,0.4);
+  }
+  .panel-header {
+    position: sticky; top: 0;
+    background: var(--panel);
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid var(--border);
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .panel-header h3 { margin: 0; font-size: 15px; font-weight: 600; }
+  .panel-header .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .panel-section {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-section:last-child { border-bottom: none; }
+  .panel-section h4 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+  }
+  .panel-fields {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    gap: 8px 12px;
+    align-items: center;
+  }
+  .panel-fields > .label {
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .panel-fields > .value {
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    word-break: break-word;
+  }
+  .panel-fields input.editable,
+  .panel-fields select.editable,
+  .panel-fields textarea.editable {
+    width: 100%;
+    box-sizing: border-box;
+    text-align: left;
+  }
+  .panel-fields textarea.editable {
+    width: 100%;
+    min-height: 90px;
+    max-height: 240px;
+    resize: vertical;
+  }
+  .panel-longtext {
+    white-space: pre-wrap;
+    background: var(--bg);
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 1.55;
+    max-height: 60vh;
+    overflow: auto;
+  }
+  .panel-longtext ul { margin: 8px 0 8px 20px; padding: 0; }
+  .panel-longtext li { margin: 4px 0; }
+  .close-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 4px;
+    width: 28px; height: 28px;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+  }
+  .close-btn:hover { color: var(--text); border-color: var(--accent); }
+
+  /* Dilution research quick-links next to ticker */
+  .dl-icons {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .dl-icons a {
+    display: inline-block;
+    padding: 1px 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    color: var(--accent);
+    text-decoration: none;
+    line-height: 1.4;
+  }
+  .dl-icons a:hover {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+    text-decoration: none;
+  }
+
+  details.detail-cell { font-size: 11px; }
+  details.detail-cell summary {
+    cursor: pointer;
+    color: var(--muted);
+    list-style: none;
+  }
+  details.detail-cell summary::-webkit-details-marker { display: none; }
+  details.detail-cell summary::before { content: "▸ "; color: var(--muted); }
+  details.detail-cell[open] summary::before { content: "▾ "; }
+  details.detail-cell .body {
+    padding: 6px 0 4px;
+    color: var(--text);
+    white-space: pre-wrap;
+    max-width: 480px;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 13px;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .toast.success { border-color: var(--green); }
+  .toast.error { border-color: var(--red); color: var(--red); }
+
+  .news-row { cursor: pointer; }
+  .news-row:hover td { background: var(--panel-2); }
+  .news-summary-snippet {
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 2px;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-row">
+    <h1>Offerings Dashboard</h1>
+    <span class="sub">Daily offering &amp; dilution research</span>
+    <form id="search-form" class="search">
+      <input id="ticker-input" type="text" class="ticker-search" placeholder="Ticker (e.g. NTCL)" autocomplete="off" autofocus />
+      <button type="submit" class="primary" id="search-btn">Research</button>
+    </form>
+  </div>
+  <div class="tabs">
+    <button class="tab active" data-tab="research">Research</button>
+    <button class="tab" data-tab="review">Review Queue</button>
+  </div>
+</header>
+
+<main>
+
+<div class="tab-content active" id="tab-research">
+  <div class="panel-grid">
+    <section>
+      <h2>Latest Snapshot</h2>
+      <div id="snapshot-body"><div class="status">Enter a ticker above to begin.</div></div>
+    </section>
+    <section>
+      <h2>Recent Offerings</h2>
+      <div id="offerings-body" class="scroll-x scroll"></div>
+    </section>
+    <section>
+      <h2>Dilution Data — Warrants</h2>
+      <div id="warrants-body" class="scroll-x scroll"></div>
+    </section>
+    <section>
+      <h2>Dilution Data — Convertibles</h2>
+      <div id="convertibles-body" class="scroll-x scroll"></div>
+    </section>
+    <section>
+      <h2>Recent News &amp; Filings</h2>
+      <div id="news-body" class="scroll-x scroll"></div>
+    </section>
+  </div>
+</div>
+
+<div class="tab-content" id="tab-review">
+  <section>
+    <h2>Review Queue</h2>
+
+    <div class="subtabs">
+      <button type="button" class="subtab active" data-sub="offerings">Offerings</button>
+      <button type="button" class="subtab" data-sub="warrants">Warrants &amp; Convertibles</button>
+    </div>
+
+    <div class="meta-row" style="margin-bottom:10px;">
+      <div class="mode-toggle" style="display:inline-flex;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+        <button type="button" class="mode-btn active" data-mode="date">Daily queue</button>
+        <button type="button" class="mode-btn" data-mode="ticker">By ticker</button>
+      </div>
+      <label><span id="review-status-label">Done</span>:
+        <select id="review-status-filter">
+          <option value="">All</option>
+          <option value="true">Yes</option>
+          <option value="false">No</option>
+          <option value="null">Empty (null)</option>
+          <option value="notnull">Set (not null)</option>
+        </select>
+      </label>
+    </div>
+
+    <form id="review-form-date" class="meta-row" style="margin-bottom:14px;">
+      <label>Filed at:
+        <input type="date" id="review-date" />
+      </label>
+      <button type="submit" class="primary" id="review-refresh">Refresh</button>
+      <button type="button" class="secondary" id="review-today">Today</button>
+      <button type="button" class="secondary" id="review-yesterday">Yesterday (CDT)</button>
+      <span id="review-summary" class="status" style="margin-left:auto;"></span>
+    </form>
+
+    <form id="review-form-ticker" class="meta-row" style="margin-bottom:14px;display:none;">
+      <label>Ticker:
+        <input type="text" id="review-ticker" placeholder="e.g. AEHL" autocomplete="off" style="text-transform:uppercase;" />
+      </label>
+      <button type="submit" class="primary">Load history</button>
+      <button type="button" class="secondary" id="review-back-to-daily">← Back to daily queue</button>
+      <span id="review-summary-ticker" class="status" style="margin-left:auto;"></span>
+    </form>
+
+    <div id="review-body"></div>
+  </section>
+</div>
+
+</main>
+
+<aside id="review-panel" class="side-panel" aria-hidden="true">
+  <div class="panel-backdrop" data-panel-close></div>
+  <div class="panel-card">
+    <div class="panel-header">
+      <div>
+        <h3 id="panel-title">—</h3>
+        <div class="meta" id="panel-subtitle"></div>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="close-btn" id="panel-prev" title="Previous (k / ↑)" aria-label="Previous row">↑</button>
+        <span id="panel-position" class="status" style="font-size:11px;min-width:54px;text-align:center;"></span>
+        <button type="button" class="close-btn" id="panel-next" title="Next (j / ↓)" aria-label="Next row">↓</button>
+        <span style="width:8px;"></span>
+        <button type="button" class="primary save-btn" id="panel-save" disabled>Save</button>
+        <button type="button" class="secondary" id="panel-revert">Revert</button>
+        <button type="button" class="close-btn" data-panel-close title="Close (Esc)" aria-label="Close panel">×</button>
+      </div>
+    </div>
+    <div id="panel-content"></div>
+  </div>
+</aside>
+
+<aside id="news-panel" class="side-panel" aria-hidden="true">
+  <div class="panel-backdrop" data-news-close></div>
+  <div class="panel-card">
+    <div class="panel-header">
+      <div>
+        <h3 id="news-panel-title">Summary</h3>
+        <div class="meta" id="news-panel-subtitle"></div>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="close-btn" id="news-prev" title="Previous (k / ↑)" aria-label="Previous">↑</button>
+        <span id="news-position" class="status" style="font-size:11px;min-width:54px;text-align:center;"></span>
+        <button type="button" class="close-btn" id="news-next" title="Next (j / ↓)" aria-label="Next">↓</button>
+        <span style="width:8px;"></span>
+        <button type="button" class="close-btn" data-news-close title="Close (Esc)" aria-label="Close">×</button>
+      </div>
+    </div>
+    <div id="news-panel-content"></div>
+  </div>
+</aside>
+
+<div id="toast" style="display:none;" class="toast"></div>
+
+<script>
+// ---------------- shared utils ----------------
+const num = (v) => {
+  if (v == null || v === "") return null;
+  const n = typeof v === "number" ? v : Number(String(v).replace(/[,$]/g, ""));
+  return isFinite(n) ? n : null;
+};
+const fmtInt = (n) => {
+  const v = num(n);
+  return v == null ? "—" : Math.round(v).toLocaleString();
+};
+const fmtMoney = (n) => {
+  const v = num(n);
+  if (v == null) return "—";
+  return "$" + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+};
+const fmtMoneyInt = (n) => {
+  const v = num(n);
+  return v == null ? "—" : "$" + Math.round(v).toLocaleString();
+};
+const fmtDate = (d) => d ? String(d).slice(0, 10) : "—";
+const fmtDateTime = (d) => d ? new Date(d).toLocaleString() : "—";
+const escapeHtml = (s) => s == null ? "" : String(s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+function askEdgarLink(ticker, filingUrl, label) {
+  if (!filingUrl) return "—";
+  const url = filingUrl.startsWith("http")
+    ? filingUrl
+    : `https://app.askedgar.io/filing?ticker=${encodeURIComponent(ticker || "")}&filingUrl=${encodeURIComponent(filingUrl)}`;
+  return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label || "Open")}</a>`;
+}
+
+// Quick-links rendered next to a ticker.
+//   DT = DilutionTracker (external)
+//   AE = AskEdgar dilution (external)
+//   OS = Open ticker in OS Dashboard (sister tool, port 8765)
+//   RP = Research Page in this dashboard (new browser tab)
+//   RQ = jump to Review Queue ticker mode (same tab)
+function dilutionLinks(ticker) {
+  if (!ticker) return "";
+  const t = encodeURIComponent(ticker);
+  const e = escapeHtml(ticker);
+  return `<span class="dl-icons" onclick="event.stopPropagation()">
+    <a href="https://dilutiontracker.com/app/search/${t}?a=ps7ydb" target="_blank" rel="noopener" title="Open ${e} on DilutionTracker">DT</a>
+    <a href="https://app.askedgar.io/ticker/${t}/dilution" target="_blank" rel="noopener" title="Open ${e} on AskEdgar (dilution)">AE</a>
+    <a href="http://localhost:8765/?ticker=${t}" target="_blank" rel="noopener" title="Open ${e} in OS Dashboard">OS</a>
+    <a href="/?ticker=${t}" target="_blank" rel="noopener" title="Open ${e} in the Research tab (new browser tab)">RP</a>
+    <a href="?tab=review&rmode=ticker&rt=${t}" onclick="openReviewByTicker('${e}'); return false;" title="Open ${e} in Review Queue (full history)">RQ</a>
+  </span>`;
+}
+
+function openReviewByTicker(ticker) {
+  closeReviewPanel();
+  document.querySelector('.tab[data-tab="review"]').click();
+  setReviewMode("ticker", { ticker });
+  document.getElementById("review-ticker").value = ticker;
+  loadReview();
+}
+
+function setStatus(id, msg) { document.getElementById(id).innerHTML = `<div class="status">${msg}</div>`; }
+function setError(id, msg)  { document.getElementById(id).innerHTML = `<div class="error">${escapeHtml(msg)}</div>`; }
+
+let toastTimer = null;
+function toast(msg, kind = "success") {
+  const el = document.getElementById("toast");
+  el.className = `toast ${kind}`;
+  el.textContent = msg;
+  el.style.display = "block";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.display = "none"; }, 3500);
+}
+
+function cssEscape(s) {
+  if (window.CSS && CSS.escape) return CSS.escape(String(s));
+  return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => "\\" + c);
+}
+
+// ---------------- tab switching ----------------
+document.querySelectorAll(".tab").forEach((b) => {
+  b.addEventListener("click", () => {
+    const target = b.dataset.tab;
+    document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === b));
+    document.querySelectorAll(".tab-content").forEach((c) => c.classList.toggle("active", c.id === `tab-${target}`));
+    history.replaceState(null, "", updateQueryParam("tab", target));
+    if (target === "review" && !reviewLoadedOnce) {
+      loadReview();
+    }
+  });
+});
+function updateQueryParam(key, value) {
+  const u = new URL(window.location);
+  u.searchParams.set(key, value);
+  return u.pathname + u.search;
+}
+
+// ===================================================================
+// RESEARCH TAB
+// ===================================================================
+let currentTicker = "";
+let lastNewsResults = [];
+
+async function research(ticker) {
+  ticker = (ticker || "").trim().toUpperCase();
+  if (!ticker) return;
+  currentTicker = ticker;
+  document.getElementById("ticker-input").value = ticker;
+  const u = new URL(window.location);
+  u.searchParams.set("ticker", ticker);
+  history.replaceState(null, "", u.pathname + u.search);
+  document.title = `${ticker} · Offerings Dashboard`;
+  const btn = document.getElementById("search-btn");
+  btn.disabled = true;
+  btn.textContent = "Loading…";
+
+  setStatus("snapshot-body", "Loading…");
+  setStatus("offerings-body", "Loading…");
+  setStatus("warrants-body", "Loading…");
+  setStatus("convertibles-body", "Loading…");
+  setStatus("news-body", "Loading…");
+
+  const [offerings, dilution, news] = await Promise.allSettled([
+    fetchOfferingsAdvanced(ticker),
+    fetchDilutionDataAdvanced(ticker),
+    fetchNewsBasic(ticker),
+  ]);
+
+  renderSnapshot(ticker, offerings, dilution, news);
+  renderOfferings(ticker, offerings);
+  renderDilution(ticker, dilution);
+  renderNews(ticker, news);
+
+  btn.disabled = false;
+  btn.textContent = "Research";
+}
+
+async function fetchOfferingsAdvanced(ticker) {
+  const r = await fetch(`/api/offerings-advanced?ticker=${encodeURIComponent(ticker)}&limit=20&page=1`);
+  const j = await r.json();
+  if (!r.ok || j.status === "error") throw new Error(j?.error?.message || `HTTP ${r.status}`);
+  return j;
+}
+async function fetchDilutionDataAdvanced(ticker) {
+  const r = await fetch(`/api/dilution-data-advanced?ticker=${encodeURIComponent(ticker)}&limit=50&page=1`);
+  const j = await r.json();
+  if (!r.ok || j.status === "error") throw new Error(j?.error?.message || `HTTP ${r.status}`);
+  return j;
+}
+async function fetchNewsBasic(ticker) {
+  const r = await fetch(`/api/news-basic?ticker=${encodeURIComponent(ticker)}&limit=30&page=1`);
+  const j = await r.json();
+  if (!r.ok || j.status === "error") throw new Error(j?.error?.message || `HTTP ${r.status}`);
+  return j;
+}
+
+// dilution-data-advanced returns a mix of warrants and convertibles. They look
+// distinct enough at the field level that we can split them ourselves.
+function isConvertible(row) {
+  return row && (row.conversion_price != null || row.maturity_date != null
+    || row.convertible_date != null || row.convertible_debt_remaining != null);
+}
+function isWarrant(row) {
+  return row && (row.warrants_amount != null || row.warrants_exercise_price != null
+    || row.exercisable_date != null || row.expiration_date != null);
+}
+function splitDilution(rows) {
+  const warrants = [];
+  const convertibles = [];
+  for (const r of rows || []) {
+    if (isConvertible(r)) convertibles.push(r);
+    else if (isWarrant(r)) warrants.push(r);
+    else warrants.push(r); // default bucket
+  }
+  return { warrants, convertibles };
+}
+
+function renderSnapshot(ticker, offRes, dilRes, newsRes) {
+  const offerings = offRes.status === "fulfilled" ? (offRes.value.results || []) : [];
+  const news = newsRes.status === "fulfilled" ? (newsRes.value.results || []) : [];
+  const dil = dilRes.status === "fulfilled" ? splitDilution(dilRes.value.results || []) : { warrants: [], convertibles: [] };
+
+  const lastOffer = offerings[0];
+  const lastNews = news[0];
+
+  const totalOfferingAmount = offerings.reduce((s, o) => s + (num(o.offering_amount) || 0), 0);
+  const totalShares = offerings.reduce((s, o) => s + (num(o.shares_amount) || 0), 0);
+
+  const cards = [
+    {
+      label: "Ticker",
+      value: `${escapeHtml(ticker)} ${dilutionLinks(ticker)}`,
+      sub: lastOffer && lastOffer.offering_type ? escapeHtml(lastOffer.offering_type) : "",
+    },
+    {
+      label: "Last Offering",
+      value: lastOffer
+        ? `<span class="form-pill">${escapeHtml(lastOffer.form_type || "—")}</span>`
+        : "—",
+      valueSmall: true,
+      sub: lastOffer ? `${fmtDate(lastOffer.filed_at)} · ${askEdgarLink(ticker, lastOffer.askedgar_url, "Open")}` : "",
+    },
+    {
+      label: "Last Offering $",
+      value: lastOffer ? fmtMoneyInt(lastOffer.offering_amount) : "—",
+      sub: lastOffer && lastOffer.share_price != null ? `@ ${fmtMoney(lastOffer.share_price)}/sh` : "",
+    },
+    {
+      label: "Last Shares",
+      value: lastOffer ? fmtInt(lastOffer.shares_amount) : "—",
+      sub: lastOffer && lastOffer.warrants_amount != null ? `+ ${fmtInt(lastOffer.warrants_amount)} warrants` : "",
+    },
+    {
+      label: "Recent Offerings",
+      value: offerings.length ? String(offerings.length) : "—",
+      sub: offerings.length ? `${fmtMoneyInt(totalOfferingAmount)} · ${fmtInt(totalShares)} shares` : "",
+    },
+    {
+      label: "Warrants",
+      value: dil.warrants.length ? String(dil.warrants.length) : "—",
+      sub: dil.warrants.length ? `${fmtInt(dil.warrants.reduce((s, w) => s + (num(w.warrants_remaining) || 0), 0))} remaining` : "",
+    },
+    {
+      label: "Convertibles",
+      value: dil.convertibles.length ? String(dil.convertibles.length) : "—",
+      sub: dil.convertibles.length ? `${fmtMoneyInt(dil.convertibles.reduce((s, c) => s + (num(c.convertible_debt_remaining) || 0), 0))} debt` : "",
+    },
+    {
+      label: "Latest News",
+      value: lastNews ? fmtDate(lastNews.filed_at) : "—",
+      valueSmall: true,
+      sub: lastNews ? `<span class="form-pill">${escapeHtml(lastNews.form_type || "")}</span>` : "",
+    },
+  ];
+
+  if (!offerings.length && !news.length && !dil.warrants.length && !dil.convertibles.length) {
+    setError("snapshot-body", "No data found for this ticker.");
+    return;
+  }
+
+  document.getElementById("snapshot-body").innerHTML = `
+    <div class="cards">
+      ${cards.map((c) => `
+        <div class="card">
+          <div class="label">${c.label}</div>
+          <div class="value${c.valueSmall ? " small" : ""}${c.valueCls || ""}">${c.value || "—"}</div>
+          ${c.sub ? `<div class="sub">${c.sub}</div>` : ""}
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderOfferings(ticker, res) {
+  if (res.status === "rejected") return setError("offerings-body", `Failed to load: ${res.reason.message}`);
+  const offerings = res.value.results || [];
+  if (!offerings.length) {
+    document.getElementById("offerings-body").innerHTML = `<div class="status">No recent offerings.</div>`;
+    return;
+  }
+  const html = `
+    <table>
+      <thead><tr>
+        <th>Filed</th>
+        <th>Form</th>
+        <th>Headline</th>
+        <th>Type</th>
+        <th class="num">Shares</th>
+        <th class="num">Price</th>
+        <th class="num">Warrants</th>
+        <th class="num">Conv. Price</th>
+        <th class="num">Amount Raised</th>
+        <th>Investors</th>
+        <th>Bank</th>
+        <th>Filing</th>
+      </tr></thead>
+      <tbody>
+        ${offerings.map((o) => `
+          <tr>
+            <td>${fmtDate(o.filed_at)}</td>
+            <td><span class="form-pill">${escapeHtml(o.form_type || "—")}</span></td>
+            <td>
+              <strong>${escapeHtml(o.headline || "—")}</strong>
+              ${o.selling_shareholder_details ? `<details class="detail-cell"><summary>Details</summary><div class="body">${escapeHtml(o.selling_shareholder_details)}</div></details>` : ""}
+            </td>
+            <td>${escapeHtml(o.offering_type || "")}</td>
+            <td class="num">${fmtInt(o.shares_amount)}</td>
+            <td class="num">${o.share_price == null ? "—" : fmtMoney(o.share_price)}</td>
+            <td class="num">${fmtInt(o.warrants_amount)}</td>
+            <td class="num">${o.conversion_price == null ? "—" : fmtMoney(o.conversion_price)}</td>
+            <td class="num">${fmtMoneyInt(o.offering_amount)}</td>
+            <td class="note">${escapeHtml(o.investors || "")}</td>
+            <td class="note">${escapeHtml(o.bank || "")}</td>
+            <td>${o.askedgar_url ? `<a href="${escapeHtml(o.askedgar_url)}" target="_blank" rel="noopener">Open</a>` : "—"}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  document.getElementById("offerings-body").innerHTML = html;
+}
+
+function renderDilution(ticker, res) {
+  if (res.status === "rejected") {
+    setError("warrants-body", `Failed to load: ${res.reason.message}`);
+    setError("convertibles-body", `Failed to load: ${res.reason.message}`);
+    return;
+  }
+  const { warrants, convertibles } = splitDilution(res.value.results || []);
+
+  // Warrants
+  if (!warrants.length) {
+    document.getElementById("warrants-body").innerHTML = `<div class="status">No warrants found.</div>`;
+  } else {
+    document.getElementById("warrants-body").innerHTML = `
+      <table>
+        <thead><tr>
+          <th>Filed</th>
+          <th>Details</th>
+          <th class="num">Amount</th>
+          <th class="num">Remaining</th>
+          <th class="num">Exercise $</th>
+          <th class="num">Pre-funded Cost</th>
+          <th>Exercisable</th>
+          <th>Expires</th>
+          <th>Registered</th>
+          <th>Price Protection</th>
+          <th>Owners</th>
+          <th>Bank</th>
+          <th>Filing</th>
+        </tr></thead>
+        <tbody>
+          ${warrants.map((w) => `
+            <tr>
+              <td>${fmtDate(w.filed_at)}</td>
+              <td>${escapeHtml(w.details || "")}</td>
+              <td class="num">${fmtInt(w.warrants_amount)}</td>
+              <td class="num">${fmtInt(w.warrants_remaining)}</td>
+              <td class="num">${w.warrants_exercise_price == null ? "—" : fmtMoney(w.warrants_exercise_price)}</td>
+              <td class="num">${w.prefunded_cost == null ? "—" : fmtMoney(w.prefunded_cost)}</td>
+              <td>${fmtDate(w.exercisable_date)}</td>
+              <td>${fmtDate(w.expiration_date)}</td>
+              <td class="note">${escapeHtml(w.registered || "")}</td>
+              <td class="note">${escapeHtml(w.price_protection || "")}${w.pp_clause ? `<details class="detail-cell"><summary>Clause</summary><div class="body">${escapeHtml(w.pp_clause)}</div></details>` : ""}</td>
+              <td class="note">${escapeHtml(w.owners || "")}</td>
+              <td class="note">${escapeHtml(w.bank || "")}</td>
+              <td>${w.askedgar_url ? `<a href="${escapeHtml(w.askedgar_url)}" target="_blank" rel="noopener">Open</a>` : "—"}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+
+  // Convertibles
+  if (!convertibles.length) {
+    document.getElementById("convertibles-body").innerHTML = `<div class="status">No convertibles found.</div>`;
+  } else {
+    document.getElementById("convertibles-body").innerHTML = `
+      <table>
+        <thead><tr>
+          <th>Filed</th>
+          <th>Details</th>
+          <th class="num">Conv. Price</th>
+          <th class="num">Offering Amount</th>
+          <th class="num">Debt Remaining</th>
+          <th class="num">Underlying Sh.</th>
+          <th>Convertible</th>
+          <th>Maturity</th>
+          <th>Registered</th>
+          <th>Price Protection</th>
+          <th>Owners</th>
+          <th>Bank</th>
+          <th>Filing</th>
+        </tr></thead>
+        <tbody>
+          ${convertibles.map((c) => `
+            <tr>
+              <td>${fmtDate(c.filed_at)}</td>
+              <td>${escapeHtml(c.details || "")}</td>
+              <td class="num">${c.conversion_price == null ? "—" : fmtMoney(c.conversion_price)}</td>
+              <td class="num">${fmtMoneyInt(c.offering_amount)}</td>
+              <td class="num">${fmtMoneyInt(c.convertible_debt_remaining)}</td>
+              <td class="num">${fmtInt(c.underlying_shares_remaining)}</td>
+              <td>${fmtDate(c.convertible_date)}</td>
+              <td>${fmtDate(c.maturity_date)}</td>
+              <td class="note">${escapeHtml(c.registered || "")}</td>
+              <td class="note">${escapeHtml(c.price_protection || "")}${c.pp_clause ? `<details class="detail-cell"><summary>Clause</summary><div class="body">${escapeHtml(c.pp_clause)}</div></details>` : ""}</td>
+              <td class="note">${escapeHtml(c.owners || "")}</td>
+              <td class="note">${escapeHtml(c.bank || "")}</td>
+              <td>${c.askedgar_url ? `<a href="${escapeHtml(c.askedgar_url)}" target="_blank" rel="noopener">Open</a>` : "—"}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
+  }
+}
+
+function renderNews(ticker, res) {
+  if (res.status === "rejected") return setError("news-body", `Failed to load: ${res.reason.message}`);
+  const items = res.value.results || [];
+  lastNewsResults = items;
+  if (!items.length) {
+    document.getElementById("news-body").innerHTML = `<div class="status">No news found.</div>`;
+    return;
+  }
+  const html = `
+    <table>
+      <thead><tr>
+        <th>Filed</th>
+        <th>Form</th>
+        <th>Title / Summary</th>
+        <th>Author</th>
+        <th>Filing</th>
+      </tr></thead>
+      <tbody>
+        ${items.map((n, i) => {
+          const snip = (n.summary || "").replace(/\s+/g, " ").trim().slice(0, 200);
+          return `
+          <tr class="news-row" data-news-idx="${i}">
+            <td>${fmtDate(n.filed_at)}<div class="sub" style="color:var(--muted);font-size:11px;">${n.filed_at_time ? new Date(n.filed_at_time).toLocaleTimeString() : ""}</div></td>
+            <td><span class="form-pill">${escapeHtml(n.form_type || "—")}</span></td>
+            <td>
+              <strong>${escapeHtml(n.title || "—")}</strong>
+              ${snip ? `<div class="news-summary-snippet">${escapeHtml(snip)}${n.summary && n.summary.length > 200 ? "…" : ""}</div>` : ""}
+            </td>
+            <td class="note">${escapeHtml(n.author || "")}</td>
+            <td>${n.url ? `<a href="${escapeHtml(n.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Open</a>` : "—"}</td>
+          </tr>
+        `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+  const body = document.getElementById("news-body");
+  body.innerHTML = html;
+  body.querySelectorAll(".news-row").forEach((tr) => {
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest("a, button")) return;
+      openNewsPanel(Number(tr.dataset.newsIdx));
+    });
+  });
+}
+
+// ---------------- news summary panel ----------------
+let newsPanelIdx = -1;
+
+function openNewsPanel(idx) {
+  if (idx < 0 || idx >= lastNewsResults.length) return;
+  newsPanelIdx = idx;
+  const n = lastNewsResults[idx];
+  const panel = document.getElementById("news-panel");
+  panel.classList.add("open");
+  panel.setAttribute("aria-hidden", "false");
+
+  document.getElementById("news-panel-title").innerHTML =
+    `Summary — <strong>${escapeHtml(n.ticker || "")}</strong> ${escapeHtml(n.form_type || "")}`;
+  const filedLine = n.filed_at_time
+    ? new Date(n.filed_at_time).toLocaleString()
+    : fmtDate(n.filed_at);
+  document.getElementById("news-panel-subtitle").textContent = `Filed at: ${filedLine}`;
+
+  const summaryHtml = renderSummary(n.summary || "");
+  const fields = [
+    ["Title", escapeHtml(n.title || "—")],
+    ["Form Type", `<span class="form-pill">${escapeHtml(n.form_type || "—")}</span>`],
+    ["Filed at", filedLine],
+    ["Author", escapeHtml(n.author || "—")],
+    ["File no.", escapeHtml(n.file_no || "—")],
+    ["Link", n.url ? `<a href="${escapeHtml(n.url)}" target="_blank" rel="noopener">Open on AskEdgar</a>` : "—"],
+  ];
+
+  document.getElementById("news-panel-content").innerHTML = `
+    <div class="panel-section">
+      <h4>Form ${escapeHtml(n.form_type || "")}:</h4>
+      <div class="panel-longtext">${summaryHtml || "<em>No summary available.</em>"}</div>
+    </div>
+    <div class="panel-section">
+      <h4>Metadata</h4>
+      <div class="panel-fields">
+        ${fields.map(([l, v]) => `<div class="label">${l}</div><div class="value">${v}</div>`).join("")}
+      </div>
+    </div>
+  `;
+
+  document.getElementById("news-position").textContent = `${idx + 1} / ${lastNewsResults.length}`;
+  document.getElementById("news-prev").disabled = idx <= 0;
+  document.getElementById("news-next").disabled = idx >= lastNewsResults.length - 1;
+}
+
+function closeNewsPanel() {
+  const panel = document.getElementById("news-panel");
+  panel.classList.remove("open");
+  panel.setAttribute("aria-hidden", "true");
+  newsPanelIdx = -1;
+}
+
+function newsNavigate(delta) {
+  if (newsPanelIdx < 0) return;
+  const next = newsPanelIdx + delta;
+  if (next < 0 || next >= lastNewsResults.length) return;
+  openNewsPanel(next);
+}
+
+// Render the AskEdgar summary text into mild HTML. AskEdgar summaries arrive
+// as light markdown: `**bold**`, `* item` list bullets, numbered headers like
+// "1.) ...", and blank-line separation. Escape first, then apply inline bold.
+function renderSummary(text) {
+  if (!text) return "";
+  const inline = (s) => escapeHtml(s).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  const lines = text.split(/\r?\n/);
+  const out = [];
+  let inList = false;
+  const flush = () => { if (inList) { out.push("</ul>"); inList = false; } };
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) { flush(); out.push(""); continue; }
+    if (/^[-•*]\s+/.test(line)) {
+      if (!inList) { out.push("<ul>"); inList = true; }
+      out.push(`<li>${inline(line.replace(/^[-•*]\s+/, ""))}</li>`);
+      continue;
+    }
+    flush();
+    const boldOnly = line.match(/^\*\*(.+)\*\*\s*$/);
+    if (boldOnly) {
+      out.push(`<div><strong>${escapeHtml(boldOnly[1])}</strong></div>`);
+      continue;
+    }
+    if (/^\d+[.)]\s+/.test(line) || /^[A-Z][A-Z0-9 ]+:/.test(line)) {
+      out.push(`<div><strong>${inline(line)}</strong></div>`);
+    } else {
+      out.push(`<div>${inline(line)}</div>`);
+    }
+  }
+  flush();
+  return out.join("");
+}
+
+document.getElementById("news-prev").addEventListener("click", () => newsNavigate(-1));
+document.getElementById("news-next").addEventListener("click", () => newsNavigate(1));
+document.querySelectorAll("[data-news-close]").forEach((el) => {
+  el.addEventListener("click", closeNewsPanel);
+});
+
+// ===================================================================
+// REVIEW QUEUE TAB
+// ===================================================================
+// Two queue configs — Offerings (offering_data_new_final_clone) and
+// Warrants & Convertibles (warrants_convertibles3). Same shape, different
+// fields/endpoints. The render functions are bound below so the queue config
+// is fully self-contained.
+const OFFERINGS_QUEUE = {
+  key: "offerings",
+  label: "Offerings",
+  api: "/api/review",
+  byIds: "/api/review/by-ids",
+  update: "/api/review/update",
+  pinKey: "offerings-dashboard-pinned-ids",
+  statusField: "done",
+  statusLabel: "Done",
+  statusUrlParam: "rdone",
+  serverParam: "done",
+  defaultStatus: "true",
+  numeric: ["offering_amount", "share_price", "conversion_price", "shares_amount", "warrants_amount", "warrants_exercise_price"],
+  boolean: ["done"],
+  text: ["ticker", "headline", "selling_shareholder_details", "commentary", "disclosure_type", "askedgar_url", "potential_owners", "bank", "form_type"],
+  date: [],
+  rows: new Map(),
+  dirty: new Map(),
+  stale: new Set(),
+  renderRow: null,
+  renderPanel: null,
+  renderTableHead: null,
+};
+
+const WARRANTS_QUEUE = {
+  key: "warrants",
+  label: "Warrants & Convertibles",
+  api: "/api/warrants",
+  byIds: "/api/warrants/by-ids",
+  update: "/api/warrants/update",
+  pinKey: "offerings-dashboard-pinned-warrants",
+  statusField: "verified",
+  statusLabel: "Verified",
+  statusUrlParam: "rverified",
+  serverParam: "verified",
+  defaultStatus: "true",
+  numeric: ["warrants_amount", "warrants_exercise_price", "prefunded_cost", "offering_amount", "conversion_price"],
+  boolean: ["verified"],
+  text: ["ticker", "form_type", "details", "selling_shareholder_details", "owners_two", "askedgar_url", "pp_clause", "price_protection", "owners", "bank"],
+  date: ["expiration_date", "exercisable_date", "maturity_date", "convertible_date"],
+  rows: new Map(),
+  dirty: new Map(),
+  stale: new Set(),
+  renderRow: null,
+  renderPanel: null,
+  renderTableHead: null,
+};
+
+const QUEUES = { offerings: OFFERINGS_QUEUE, warrants: WARRANTS_QUEUE };
+let activeQueueKey = "offerings";
+const activeQueue = () => QUEUES[activeQueueKey];
+
+function fieldType(q, field) {
+  if (q.numeric.includes(field)) return "numeric";
+  if (q.boolean.includes(field)) return "boolean";
+  if (q.date.includes(field)) return "date";
+  if (q.text.includes(field)) return "text";
+  return null;
+}
+
+function getPinnedIds(q) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(q.pinKey) || "[]");
+    return new Set(raw.map(Number).filter(Number.isFinite));
+  } catch { return new Set(); }
+}
+function setPinnedIds(q, s) { localStorage.setItem(q.pinKey, JSON.stringify([...s])); }
+function pinId(q, id) { const s = getPinnedIds(q); s.add(Number(id)); setPinnedIds(q, s); }
+function unpinId(q, id) { const s = getPinnedIds(q); s.delete(Number(id)); setPinnedIds(q, s); }
+
+function chicagoYesterdayISO() {
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" });
+  const today = fmt.format(now);
+  const d = new Date(today + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+let reviewMode = "date";
+let reviewLoadedOnce = false;
+
+function setReviewMode(mode, opts = {}) {
+  reviewMode = mode;
+  document.querySelectorAll(".mode-btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+  document.getElementById("review-form-date").style.display   = mode === "date"   ? "" : "none";
+  document.getElementById("review-form-ticker").style.display = mode === "ticker" ? "" : "none";
+  const u = new URL(window.location);
+  u.searchParams.set("rmode", mode);
+  if (mode === "ticker" && opts.ticker) u.searchParams.set("rt", opts.ticker.toUpperCase());
+  else if (mode === "date") u.searchParams.delete("rt");
+  history.replaceState(null, "", u.pathname + u.search);
+  if (mode === "ticker" && !document.getElementById("review-ticker").value) {
+    document.getElementById("review-body").innerHTML =
+      `<div class="status">Enter a ticker above to load its full history.</div>`;
+    document.getElementById("review-summary-ticker").textContent = "";
+  }
+}
+
+function setSubtab(key, opts = {}) {
+  if (!QUEUES[key]) return;
+  activeQueueKey = key;
+  document.querySelectorAll(".subtab").forEach((b) => b.classList.toggle("active", b.dataset.sub === key));
+  const q = QUEUES[key];
+  document.getElementById("review-status-label").textContent = q.statusLabel;
+  // Read this sub-tab's status filter from URL or fall back to default.
+  const urlParams = new URLSearchParams(window.location.search);
+  const stored = urlParams.has(q.statusUrlParam) ? urlParams.get(q.statusUrlParam) : q.defaultStatus;
+  const sel = document.getElementById("review-status-filter");
+  sel.value = [...sel.options].some((o) => o.value === stored) ? stored : "";
+  // Persist sub-tab in URL.
+  const u = new URL(window.location);
+  u.searchParams.set("rsub", key);
+  history.replaceState(null, "", u.pathname + u.search);
+  // Different table semantics — close any open detail panel.
+  closeReviewPanel();
+  if (!opts.skipLoad) {
+    if (reviewMode === "ticker" && !document.getElementById("review-ticker").value) {
+      document.getElementById("review-body").innerHTML =
+        `<div class="status">Enter a ticker above to load its full history.</div>`;
+    } else {
+      loadReview();
+    }
+  }
+}
+
+function getStatusFilter() {
+  return document.getElementById("review-status-filter").value || "";
+}
+function syncStatusFilterToUrl() {
+  const q = activeQueue();
+  const u = new URL(window.location);
+  // Always write the param (empty = "All") so it overrides the default on refresh.
+  u.searchParams.set(q.statusUrlParam, getStatusFilter());
+  history.replaceState(null, "", u.pathname + u.search);
+}
+
+document.querySelectorAll(".subtab").forEach((b) => {
+  b.addEventListener("click", () => {
+    if (b.dataset.sub === activeQueueKey) return;
+    setSubtab(b.dataset.sub);
+  });
+});
+
+document.querySelectorAll(".mode-btn").forEach((b) => {
+  b.addEventListener("click", () => {
+    if (b.dataset.mode === reviewMode) return;
+    setReviewMode(b.dataset.mode);
+    if (reviewMode === "date") loadReview();
+    else if (document.getElementById("review-ticker").value) loadReview();
+  });
+});
+
+document.getElementById("review-form-date").addEventListener("submit", (e) => { e.preventDefault(); loadReview(); });
+document.getElementById("review-form-ticker").addEventListener("submit", (e) => { e.preventDefault(); loadReview(); });
+document.getElementById("review-back-to-daily").addEventListener("click", () => { setReviewMode("date"); loadReview(); });
+document.getElementById("review-today").addEventListener("click", () => {
+  const fmt = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" });
+  document.getElementById("review-date").value = fmt.format(new Date());
+  loadReview();
+});
+document.getElementById("review-yesterday").addEventListener("click", () => {
+  document.getElementById("review-date").value = chicagoYesterdayISO();
+  loadReview();
+});
+document.getElementById("review-date").value = chicagoYesterdayISO();
+
+document.getElementById("review-status-filter").addEventListener("change", () => {
+  syncStatusFilterToUrl();
+  if (reviewMode === "date" || document.getElementById("review-ticker").value) loadReview();
+});
+
+async function loadReview() {
+  reviewLoadedOnce = true;
+  const body = document.getElementById("review-body");
+  body.innerHTML = `<div class="status">Loading…</div>`;
+  if (reviewMode === "ticker") return loadReviewByTicker();
+  return loadReviewByDate();
+}
+
+async function loadReviewByDate() {
+  const q = activeQueue();
+  const date = document.getElementById("review-date").value;
+  const status = getStatusFilter();
+  const summary = document.getElementById("review-summary");
+  summary.textContent = "";
+  const qs = new URLSearchParams({ filed_at: date });
+  if (status) qs.set(q.serverParam, status);
+  let main;
+  try {
+    main = await fetch(`${q.api}?${qs.toString()}`).then((r) => r.json());
+    if (main.status !== "success") throw new Error(main?.error?.message || "review failed");
+  } catch (e) {
+    setError("review-body", `Failed to load review queue: ${e.message}`);
+    return;
+  }
+
+  const mainIds = new Set(main.results.map((r) => Number(r.id)));
+  const pinnedSet = getPinnedIds(q);
+  const missingPinned = [...pinnedSet].filter((u) => !mainIds.has(u));
+  let pinnedRows = [];
+  if (missingPinned.length) {
+    try {
+      const r = await fetch(q.byIds, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: missingPinned }),
+      }).then((x) => x.json());
+      pinnedRows = r.results || [];
+    } catch (e) { /* tolerate */ }
+  }
+  q.stale = new Set(pinnedRows.map((r) => Number(r.id)));
+
+  const all = [...pinnedRows, ...main.results];
+  q.rows = new Map(all.map((r) => [Number(r.id), r]));
+  q.dirty = new Map();
+
+  const statusLabel = status ? ` · ${q.statusField} = <strong>${escapeHtml(status)}</strong>` : "";
+  summary.innerHTML = `<strong>${main.count}</strong> matching · <strong>${pinnedRows.length}</strong> pinned (filter changed) · filed_at <strong>${main.filed_at}</strong>${statusLabel}`;
+  renderReviewTable(q, all);
+}
+
+async function loadReviewByTicker() {
+  const q = activeQueue();
+  const ticker = (document.getElementById("review-ticker").value || "").trim().toUpperCase();
+  const summary = document.getElementById("review-summary-ticker");
+  summary.textContent = "";
+  if (!ticker) {
+    document.getElementById("review-body").innerHTML =
+      `<div class="status">Enter a ticker above to load its full history.</div>`;
+    return;
+  }
+  document.getElementById("review-ticker").value = ticker;
+  const u = new URL(window.location);
+  u.searchParams.set("rmode", "ticker");
+  u.searchParams.set("rt", ticker);
+  history.replaceState(null, "", u.pathname + u.search);
+
+  const status = getStatusFilter();
+  const qs = new URLSearchParams({ ticker });
+  if (status) qs.set(q.serverParam, status);
+  let main;
+  try {
+    main = await fetch(`${q.api}?${qs.toString()}`).then((r) => r.json());
+    if (main.status !== "success") throw new Error(main?.error?.message || "review failed");
+  } catch (e) {
+    setError("review-body", `Failed to load review queue: ${e.message}`);
+    return;
+  }
+
+  q.stale = new Set();
+  q.rows = new Map(main.results.map((r) => [Number(r.id), r]));
+  q.dirty = new Map();
+
+  const statusLabel = status ? ` · ${q.statusField} = <strong>${escapeHtml(status)}</strong>` : "";
+  summary.innerHTML = `<strong>${main.count}</strong> records for <strong>${escapeHtml(ticker)}</strong> · all dates${statusLabel}`;
+  renderReviewTable(q, main.results);
+}
+
+function renderReviewTable(q, rows) {
+  if (!rows.length) {
+    const msg = reviewMode === "ticker" ? "No records for this ticker." : "No records for this date.";
+    document.getElementById("review-body").innerHTML = `<div class="status">${msg}</div>`;
+    return;
+  }
+  const html = `
+    <div class="review-table-wrap scroll-x">
+      <table class="review-table">
+        <thead>${q.renderTableHead()}</thead>
+        <tbody>${rows.map((r) => q.renderRow(r)).join("")}</tbody>
+      </table>
+    </div>
+  `;
+  document.getElementById("review-body").innerHTML = html;
+  attachReviewHandlers();
+}
+
+function attachReviewHandlers() {
+  document.querySelectorAll("#review-body .editable").forEach((el) => {
+    el.addEventListener("input", () => onEditableChange(el));
+    el.addEventListener("change", () => onEditableChange(el));
+    el.addEventListener("click", (e) => e.stopPropagation());
+    el.addEventListener("mousedown", (e) => e.stopPropagation());
+  });
+  document.querySelectorAll("#review-body [data-save]").forEach((b) => {
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const q = QUEUES[b.dataset.queue];
+      if (q) saveRow(q, Number(b.dataset.save));
+    });
+  });
+  document.querySelectorAll("#review-body [data-revert]").forEach((b) => {
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const q = QUEUES[b.dataset.queue];
+      if (q) revertRow(q, Number(b.dataset.revert));
+    });
+  });
+  document.querySelectorAll("#review-body [data-unpin]").forEach((b) => {
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const q = QUEUES[b.dataset.queue];
+      if (q) { unpinId(q, Number(b.dataset.unpin)); loadReview(); }
+    });
+  });
+  document.querySelectorAll("#review-body tbody tr[data-id]").forEach((tr) => {
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest("input, textarea, select, button, a, .badge, summary")) return;
+      const q = QUEUES[tr.dataset.queue];
+      if (q) openReviewPanel(q, Number(tr.dataset.id));
+    });
+  });
+}
+
+function originalValueFor(q, id, field) {
+  const r = q.rows.get(Number(id));
+  return r ? r[field] : null;
+}
+
+function isSameValue(q, a, b, field) {
+  const t = fieldType(q, field);
+  if (t === "boolean") {
+    const norm = (v) => v === true ? "true" : v === false ? "false" : (v == null || v === "") ? "" : String(v);
+    return norm(a) === norm(b);
+  }
+  if (t === "text" || t === "date") {
+    return (a == null ? "" : String(a)) === (b == null ? "" : String(b));
+  }
+  return num(a) === num(b);
+}
+
+function inputsFor(q, id, field) {
+  return document.querySelectorAll(
+    `.editable[data-queue="${q.key}"][data-id="${id}"][data-field="${field}"]`);
+}
+
+function onEditableChange(el) {
+  const q = QUEUES[el.dataset.queue];
+  if (!q) return;
+  const id = Number(el.dataset.id);
+  const field = el.dataset.field;
+  const newVal = el.value;
+
+  inputsFor(q, id, field).forEach((other) => {
+    if (other !== el && other.value !== newVal) other.value = newVal;
+  });
+
+  const orig = originalValueFor(q, id, field);
+  const dirty = !isSameValue(q, newVal, orig, field);
+
+  let bag = q.dirty.get(id) || {};
+  if (dirty) bag[field] = newVal; else delete bag[field];
+  if (Object.keys(bag).length) q.dirty.set(id, bag); else q.dirty.delete(id);
+
+  inputsFor(q, id, field).forEach((e) => e.classList.toggle("dirty", dirty));
+  updateSaveButtonsFor(q, id);
+}
+
+function updateSaveButtonsFor(q, id) {
+  const hasDirty = q.dirty.has(Number(id));
+  const rowBtn = document.querySelector(`[data-queue="${q.key}"][data-save="${id}"]`);
+  if (rowBtn) {
+    rowBtn.disabled = !hasDirty;
+    rowBtn.classList.toggle("dirty", hasDirty);
+  }
+  const panel = document.getElementById("review-panel");
+  if (panel.classList.contains("open") && panel.dataset.queue === q.key && Number(panel.dataset.id) === Number(id)) {
+    const panelBtn = document.getElementById("panel-save");
+    panelBtn.disabled = !hasDirty;
+    panelBtn.classList.toggle("dirty", hasDirty);
+  }
+}
+
+async function saveRow(q, id) {
+  const updates = q.dirty.get(Number(id));
+  if (!updates) return;
+
+  const payload = { id: Number(id), updates: {} };
+  for (const [k, v] of Object.entries(updates)) {
+    const t = fieldType(q, k);
+    if (t === "boolean") {
+      payload.updates[k] = v === "" ? null : v === "true";
+    } else if (t === "text" || t === "date") {
+      payload.updates[k] = v === "" ? null : v;
+    } else {
+      const n = num(v);
+      payload.updates[k] = (v === "" || v == null) ? null : n;
+    }
+  }
+
+  try {
+    const res = await fetch(q.update, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const j = await res.json();
+    if (!res.ok || j.status !== "success") throw new Error(j?.error?.message || `HTTP ${res.status}`);
+    pinId(q, id);
+    q.rows.set(Number(id), j.result);
+    q.dirty.delete(Number(id));
+    toast(`Saved ${j.result.ticker || "#" + id} · ${Object.keys(updates).length} field(s)`);
+    const tr = document.querySelector(`#review-body tr[data-queue="${q.key}"][data-id="${id}"]`);
+    if (tr) {
+      tr.outerHTML = q.renderRow(j.result);
+      attachReviewHandlers();
+    }
+    const panel = document.getElementById("review-panel");
+    if (panel.classList.contains("open") && panel.dataset.queue === q.key && Number(panel.dataset.id) === Number(id)) {
+      renderReviewPanel(q, j.result);
+    }
+  } catch (e) {
+    toast(`Save failed: ${e.message}`, "error");
+  }
+}
+
+function revertRow(q, id) {
+  q.dirty.delete(Number(id));
+  const r = q.rows.get(Number(id));
+  if (!r) return;
+  const tr = document.querySelector(`#review-body tr[data-queue="${q.key}"][data-id="${id}"]`);
+  if (tr) {
+    tr.outerHTML = q.renderRow(r);
+    attachReviewHandlers();
+  }
+  const panel = document.getElementById("review-panel");
+  if (panel.classList.contains("open") && panel.dataset.queue === q.key && Number(panel.dataset.id) === Number(id)) {
+    renderReviewPanel(q, r);
+  }
+}
+
+// ---------------- review detail panel ----------------
+function openReviewPanel(q, id) {
+  const r = q.rows.get(Number(id));
+  if (!r) return;
+  const panel = document.getElementById("review-panel");
+  panel.classList.add("open");
+  panel.dataset.id = String(id);
+  panel.dataset.queue = q.key;
+  panel.setAttribute("aria-hidden", "false");
+  document.querySelectorAll("#review-body tr.active").forEach((tr) => tr.classList.remove("active"));
+  const tr = document.querySelector(`#review-body tr[data-queue="${q.key}"][data-id="${id}"]`);
+  if (tr) tr.classList.add("active");
+  renderReviewPanel(q, r);
+}
+
+function closeReviewPanel() {
+  const panel = document.getElementById("review-panel");
+  panel.classList.remove("open");
+  panel.removeAttribute("data-id");
+  panel.removeAttribute("data-queue");
+  panel.setAttribute("aria-hidden", "true");
+  document.querySelectorAll("#review-body tr.active").forEach((tr) => tr.classList.remove("active"));
+}
+
+function renderReviewPanel(q, r) {
+  const id = Number(r.id);
+  q.renderPanel(r); // queue config draws into #panel-content
+  const bag = q.dirty.get(id) || {};
+  for (const [field, val] of Object.entries(bag)) {
+    inputsFor(q, id, field).forEach((el) => {
+      el.value = val;
+      el.classList.add("dirty");
+    });
+  }
+  const content = document.getElementById("panel-content");
+  content.querySelectorAll(".editable").forEach((el) => {
+    el.addEventListener("input", () => onEditableChange(el));
+    el.addEventListener("change", () => onEditableChange(el));
+  });
+  const ids = [...q.rows.keys()];
+  const idx = ids.indexOf(id);
+  document.getElementById("panel-position").textContent = idx >= 0 ? `${idx + 1} / ${ids.length}` : "";
+  document.getElementById("panel-prev").disabled = idx <= 0;
+  document.getElementById("panel-next").disabled = idx < 0 || idx >= ids.length - 1;
+  updateSaveButtonsFor(q, id);
+  document.querySelector("#review-panel .panel-card").scrollTop = 0;
+}
+
+function panelNavigate(delta) {
+  const panel = document.getElementById("review-panel");
+  const id = Number(panel.dataset.id);
+  const q = QUEUES[panel.dataset.queue];
+  if (!id || !q) return;
+  const ids = [...q.rows.keys()];
+  const i = ids.indexOf(id);
+  if (i < 0) return;
+  const next = i + delta;
+  if (next < 0 || next >= ids.length) return;
+  openReviewPanel(q, ids[next]);
+  const tr = document.querySelector(`#review-body tr[data-queue="${q.key}"][data-id="${ids[next]}"]`);
+  if (tr) tr.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+document.getElementById("panel-save").addEventListener("click", () => {
+  const panel = document.getElementById("review-panel");
+  const q = QUEUES[panel.dataset.queue];
+  const id = Number(panel.dataset.id);
+  if (id && q) saveRow(q, id);
+});
+document.getElementById("panel-revert").addEventListener("click", () => {
+  const panel = document.getElementById("review-panel");
+  const q = QUEUES[panel.dataset.queue];
+  const id = Number(panel.dataset.id);
+  if (id && q) revertRow(q, id);
+});
+document.getElementById("panel-prev").addEventListener("click", () => panelNavigate(-1));
+document.getElementById("panel-next").addEventListener("click", () => panelNavigate(1));
+document.querySelectorAll("[data-panel-close]").forEach((el) => el.addEventListener("click", closeReviewPanel));
+
+// ---------------- shared field helpers (function declarations are hoisted) ----------------
+function fieldNum(q, id, col, val) {
+  const display = (val == null || val === "") ? "" : String(val);
+  return `<input type="text" inputmode="decimal" class="editable num" data-queue="${q.key}" data-id="${id}" data-field="${col}" value="${escapeHtml(display)}" />`;
+}
+function fieldText(q, id, col, val, cls = "") {
+  const display = (val == null || val === "") ? "" : String(val);
+  return `<input type="text" class="editable ${cls}" data-queue="${q.key}" data-id="${id}" data-field="${col}" value="${escapeHtml(display)}" />`;
+}
+function fieldTextarea(q, id, col, val, cls = "") {
+  const display = (val == null || val === "") ? "" : String(val);
+  return `<textarea class="editable ${cls}" data-queue="${q.key}" data-id="${id}" data-field="${col}" placeholder="${col}…">${escapeHtml(display)}</textarea>`;
+}
+function fieldDate(q, id, col, val) {
+  const display = val ? String(val).slice(0, 10) : "";
+  return `<input type="date" class="editable" data-queue="${q.key}" data-id="${id}" data-field="${col}" value="${escapeHtml(display)}" />`;
+}
+function booleanSelect(q, id, col, currentAttr) {
+  return `<select class="editable" data-queue="${q.key}" data-id="${id}" data-field="${col}">
+    <option value="" ${currentAttr === "" ? "selected" : ""}>—</option>
+    <option value="true" ${currentAttr === "true" ? "selected" : ""}>Yes</option>
+    <option value="false" ${currentAttr === "false" ? "selected" : ""}>No</option>
+  </select>`;
+}
+
+// ====================================================================
+// Per-queue rendering — Offerings
+// ====================================================================
+OFFERINGS_QUEUE.renderTableHead = () => `
+  <tr>
+    <th>Ticker / Form</th>
+    <th>Filed</th>
+    <th>Done</th>
+    <th>Disclosure Type</th>
+    <th>Headline</th>
+    <th class="num">Offering $</th>
+    <th class="num">Share $</th>
+    <th class="num">Conv $</th>
+    <th class="num">Shares</th>
+    <th class="num">Warrants</th>
+    <th class="num">Warr. Exercise $</th>
+    <th>Bank</th>
+    <th>Potential Owners</th>
+    <th>Selling Shareholder</th>
+    <th>Commentary</th>
+    <th>Filing</th>
+    <th>Actions</th>
+  </tr>`;
+
+OFFERINGS_QUEUE.renderRow = function (r) {
+  const q = OFFERINGS_QUEUE;
+  const id = Number(r.id);
+  const stale = q.stale.has(id);
+  const pinned = getPinnedIds(q).has(id);
+  const doneAttr = r.done === true ? "true" : r.done === false ? "false" : "";
+  return `
+    <tr class="${stale ? "stale-row " : ""}${pinned ? "pinned" : ""}" data-queue="${q.key}" data-id="${id}">
+      <td class="row-key">
+        ${fieldText(q, id, "ticker", r.ticker, "text-short")}
+        ${dilutionLinks(r.ticker)}
+        ${pinned ? `<span class="badge pin" data-queue="${q.key}" data-unpin="${id}" title="Click to unpin">pinned ✕</span>` : ""}
+        ${stale ? `<span class="badge ins">stale</span>` : ""}
+        <div style="margin-top:4px;">${fieldText(q, id, "form_type", r.form_type, "text-short")}</div>
+      </td>
+      <td>${fmtDate(r.filed_at)}</td>
+      <td>${booleanSelect(q, id, "done", doneAttr)}</td>
+      <td>${fieldText(q, id, "disclosure_type", r.disclosure_type, "text-short")}</td>
+      <td>${fieldText(q, id, "headline", r.headline, "text-mid")}</td>
+      <td>${fieldNum(q, id, "offering_amount", r.offering_amount)}</td>
+      <td>${fieldNum(q, id, "share_price", r.share_price)}</td>
+      <td>${fieldNum(q, id, "conversion_price", r.conversion_price)}</td>
+      <td>${fieldNum(q, id, "shares_amount", r.shares_amount)}</td>
+      <td>${fieldNum(q, id, "warrants_amount", r.warrants_amount)}</td>
+      <td>${fieldNum(q, id, "warrants_exercise_price", r.warrants_exercise_price)}</td>
+      <td>${fieldText(q, id, "bank", r.bank, "text-short")}</td>
+      <td>${fieldText(q, id, "potential_owners", r.potential_owners, "text-mid")}</td>
+      <td>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details, "text-long")}</td>
+      <td>${fieldTextarea(q, id, "commentary", r.commentary, "text-long")}</td>
+      <td>${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open</a>` : "—"}</td>
+      <td>
+        <div class="row-actions">
+          <button class="primary save-btn" data-queue="${q.key}" data-save="${id}" disabled>Save</button>
+          <button class="secondary" data-queue="${q.key}" data-revert="${id}">Revert</button>
+        </div>
+      </td>
+    </tr>`;
+};
+
+OFFERINGS_QUEUE.renderPanel = function (r) {
+  const q = OFFERINGS_QUEUE;
+  const id = Number(r.id);
+  const doneAttr = r.done === true ? "true" : r.done === false ? "false" : "";
+  document.getElementById("panel-title").innerHTML =
+    `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`;
+  document.getElementById("panel-subtitle").textContent = `Filed ${fmtDate(r.filed_at)} · id ${id}`;
+  document.getElementById("panel-content").innerHTML = `
+    <div class="panel-section">
+      <h4>Source</h4>
+      <div class="panel-fields">
+        <div class="label">Filing</div>
+        <div class="value">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open AskEdgar</a>` : "—"}</div>
+        <div class="label">Filed at</div>
+        <div class="value">${fmtDate(r.filed_at)}</div>
+        <div class="label">Financing activity</div>
+        <div class="value">${r.financing_activity === true ? '<span class="badge done">Yes</span>' : r.financing_activity === false ? '<span class="badge ins">No</span>' : "—"}</div>
+        <div class="label">Last DB update</div>
+        <div class="value">${fmtDateTime(r.updated_at)}</div>
+        <div class="label">Row ID</div>
+        <div class="value">${id}</div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <h4>Key Details</h4>
+      <div class="panel-fields">
+        <div class="label">Done</div>
+        <div>${booleanSelect(q, id, "done", doneAttr)}</div>
+        <div class="label">Ticker</div>
+        <div>${fieldText(q, id, "ticker", r.ticker)}</div>
+        <div class="label">Headline</div>
+        <div>${fieldText(q, id, "headline", r.headline)}</div>
+        <div class="label">Form Type</div>
+        <div>${fieldText(q, id, "form_type", r.form_type)}</div>
+        <div class="label">Disclosure Type</div>
+        <div>${fieldText(q, id, "disclosure_type", r.disclosure_type)}</div>
+        <div class="label">Selling Shareholder Details</div>
+        <div>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details)}</div>
+        <div class="label">Commentary</div>
+        <div>${fieldTextarea(q, id, "commentary", r.commentary)}</div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <h4>Numbers</h4>
+      <div class="panel-fields">
+        <div class="label">Offering Amount ($)</div><div>${fieldNum(q, id, "offering_amount", r.offering_amount)}</div>
+        <div class="label">Share Price ($)</div><div>${fieldNum(q, id, "share_price", r.share_price)}</div>
+        <div class="label">Conversion Price ($)</div><div>${fieldNum(q, id, "conversion_price", r.conversion_price)}</div>
+        <div class="label">Shares Amount</div><div>${fieldNum(q, id, "shares_amount", r.shares_amount)}</div>
+        <div class="label">Warrants Amount</div><div>${fieldNum(q, id, "warrants_amount", r.warrants_amount)}</div>
+        <div class="label">Warrant Exercise ($)</div><div>${fieldNum(q, id, "warrants_exercise_price", r.warrants_exercise_price)}</div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <h4>Parties</h4>
+      <div class="panel-fields">
+        <div class="label">Bank</div><div>${fieldText(q, id, "bank", r.bank)}</div>
+        <div class="label">Potential Owners</div><div>${fieldText(q, id, "potential_owners", r.potential_owners)}</div>
+      </div>
+    </div>`;
+};
+
+// ====================================================================
+// Per-queue rendering — Warrants & Convertibles
+// ====================================================================
+WARRANTS_QUEUE.renderTableHead = () => `
+  <tr>
+    <th>Ticker / Form</th>
+    <th>Filed</th>
+    <th>Verified</th>
+    <th>Details</th>
+    <th class="num">Warrants</th>
+    <th class="num">Warr. Exercise $</th>
+    <th class="num">Pre-funded $</th>
+    <th>Exercisable</th>
+    <th>Expiration</th>
+    <th class="num">Conv $</th>
+    <th class="num">Offering $</th>
+    <th>Convertible</th>
+    <th>Maturity</th>
+    <th>Owners</th>
+    <th>Owners 2</th>
+    <th>Bank</th>
+    <th>Price Protection</th>
+    <th>Selling Shareholder</th>
+    <th>Filing</th>
+    <th>Actions</th>
+  </tr>`;
+
+WARRANTS_QUEUE.renderRow = function (r) {
+  const q = WARRANTS_QUEUE;
+  const id = Number(r.id);
+  const stale = q.stale.has(id);
+  const pinned = getPinnedIds(q).has(id);
+  const verifiedAttr = r.verified === true ? "true" : r.verified === false ? "false" : "";
+  return `
+    <tr class="${stale ? "stale-row " : ""}${pinned ? "pinned" : ""}" data-queue="${q.key}" data-id="${id}">
+      <td class="row-key">
+        ${fieldText(q, id, "ticker", r.ticker, "text-short")}
+        ${dilutionLinks(r.ticker)}
+        ${pinned ? `<span class="badge pin" data-queue="${q.key}" data-unpin="${id}" title="Click to unpin">pinned ✕</span>` : ""}
+        ${stale ? `<span class="badge ins">stale</span>` : ""}
+        <div style="margin-top:4px;">${fieldText(q, id, "form_type", r.form_type, "text-short")}</div>
+      </td>
+      <td>${fmtDate(r.filed_at)}</td>
+      <td>${booleanSelect(q, id, "verified", verifiedAttr)}</td>
+      <td>${fieldText(q, id, "details", r.details, "text-mid")}</td>
+      <td>${fieldNum(q, id, "warrants_amount", r.warrants_amount)}</td>
+      <td>${fieldNum(q, id, "warrants_exercise_price", r.warrants_exercise_price)}</td>
+      <td>${fieldNum(q, id, "prefunded_cost", r.prefunded_cost)}</td>
+      <td>${fieldDate(q, id, "exercisable_date", r.exercisable_date)}</td>
+      <td>${fieldDate(q, id, "expiration_date", r.expiration_date)}</td>
+      <td>${fieldNum(q, id, "conversion_price", r.conversion_price)}</td>
+      <td>${fieldNum(q, id, "offering_amount", r.offering_amount)}</td>
+      <td>${fieldDate(q, id, "convertible_date", r.convertible_date)}</td>
+      <td>${fieldDate(q, id, "maturity_date", r.maturity_date)}</td>
+      <td>${fieldText(q, id, "owners", r.owners, "text-mid")}</td>
+      <td>${fieldText(q, id, "owners_two", r.owners_two, "text-mid")}</td>
+      <td>${fieldText(q, id, "bank", r.bank, "text-short")}</td>
+      <td>${fieldText(q, id, "price_protection", r.price_protection, "text-short")}</td>
+      <td>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details, "text-long")}</td>
+      <td>${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open</a>` : "—"}</td>
+      <td>
+        <div class="row-actions">
+          <button class="primary save-btn" data-queue="${q.key}" data-save="${id}" disabled>Save</button>
+          <button class="secondary" data-queue="${q.key}" data-revert="${id}">Revert</button>
+        </div>
+      </td>
+    </tr>`;
+};
+
+WARRANTS_QUEUE.renderPanel = function (r) {
+  const q = WARRANTS_QUEUE;
+  const id = Number(r.id);
+  const verifiedAttr = r.verified === true ? "true" : r.verified === false ? "false" : "";
+  document.getElementById("panel-title").innerHTML =
+    `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`;
+  document.getElementById("panel-subtitle").textContent = `Filed ${fmtDate(r.filed_at)} · id ${id}`;
+  document.getElementById("panel-content").innerHTML = `
+    <div class="panel-section">
+      <h4>Source</h4>
+      <div class="panel-fields">
+        <div class="label">Filing (AskEdgar)</div>
+        <div class="value">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open AskEdgar</a>` : "—"}</div>
+        <div class="label">Filing (document)</div>
+        <div class="value">${r.document_url ? `<a href="${escapeHtml(r.document_url)}" target="_blank" rel="noopener">Open document</a>` : "—"}</div>
+        <div class="label">Filed at</div>
+        <div class="value">${fmtDate(r.filed_at)}</div>
+        <div class="label">Last DB update</div>
+        <div class="value">${fmtDateTime(r.updated_at)}</div>
+        <div class="label">Row ID</div>
+        <div class="value">${id}</div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <h4>Key Details</h4>
+      <div class="panel-fields">
+        <div class="label">Verified</div>
+        <div>${booleanSelect(q, id, "verified", verifiedAttr)}</div>
+        <div class="label">Ticker</div>
+        <div>${fieldText(q, id, "ticker", r.ticker)}</div>
+        <div class="label">Details</div>
+        <div>${fieldText(q, id, "details", r.details)}</div>
+        <div class="label">Form Type</div>
+        <div>${fieldText(q, id, "form_type", r.form_type)}</div>
+        <div class="label">Selling Shareholder Details</div>
+        <div>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details)}</div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <h4>Warrants</h4>
+      <div class="panel-fields">
+        <div class="label">Warrants Amount</div><div>${fieldNum(q, id, "warrants_amount", r.warrants_amount)}</div>
+        <div class="label">Exercise Price ($)</div><div>${fieldNum(q, id, "warrants_exercise_price", r.warrants_exercise_price)}</div>
+        <div class="label">Pre-funded Cost ($)</div><div>${fieldNum(q, id, "prefunded_cost", r.prefunded_cost)}</div>
+        <div class="label">Exercisable Date</div><div>${fieldDate(q, id, "exercisable_date", r.exercisable_date)}</div>
+        <div class="label">Expiration Date</div><div>${fieldDate(q, id, "expiration_date", r.expiration_date)}</div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <h4>Convertibles</h4>
+      <div class="panel-fields">
+        <div class="label">Conversion Price ($)</div><div>${fieldNum(q, id, "conversion_price", r.conversion_price)}</div>
+        <div class="label">Offering Amount ($)</div><div>${fieldNum(q, id, "offering_amount", r.offering_amount)}</div>
+        <div class="label">Convertible Date</div><div>${fieldDate(q, id, "convertible_date", r.convertible_date)}</div>
+        <div class="label">Maturity Date</div><div>${fieldDate(q, id, "maturity_date", r.maturity_date)}</div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <h4>Parties &amp; Protection</h4>
+      <div class="panel-fields">
+        <div class="label">Owners</div><div>${fieldText(q, id, "owners", r.owners)}</div>
+        <div class="label">Owners 2</div><div>${fieldText(q, id, "owners_two", r.owners_two)}</div>
+        <div class="label">Bank</div><div>${fieldText(q, id, "bank", r.bank)}</div>
+        <div class="label">Price Protection</div><div>${fieldText(q, id, "price_protection", r.price_protection)}</div>
+        <div class="label">PP Clause</div><div>${fieldTextarea(q, id, "pp_clause", r.pp_clause)}</div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <h4>Source URLs</h4>
+      <div class="panel-fields">
+        <div class="label">AskEdgar URL</div><div>${fieldText(q, id, "askedgar_url", r.askedgar_url)}</div>
+      </div>
+    </div>`;
+};
+
+// ---------------- keybinds (review + news panels) ----------------
+document.addEventListener("keydown", (e) => {
+  const reviewOpen = document.getElementById("review-panel").classList.contains("open");
+  const newsOpen = document.getElementById("news-panel").classList.contains("open");
+  if (!reviewOpen && !newsOpen) return;
+  if (e.key === "Escape") {
+    if (newsOpen) closeNewsPanel();
+    else if (reviewOpen) closeReviewPanel();
+    return;
+  }
+  if (e.target.matches("input, textarea, select")) return;
+  if (e.key === "j" || e.key === "ArrowDown") {
+    e.preventDefault();
+    if (newsOpen) newsNavigate(1); else panelNavigate(1);
+  }
+  if (e.key === "k" || e.key === "ArrowUp") {
+    e.preventDefault();
+    if (newsOpen) newsNavigate(-1); else panelNavigate(-1);
+  }
+});
+
+// ---------------- bootstrap ----------------
+document.getElementById("search-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  research(document.getElementById("ticker-input").value);
+});
+
+const params = new URLSearchParams(window.location.search);
+const initialTab = params.get("tab");
+const initialMode = params.get("rmode") === "ticker" ? "ticker" : "date";
+const initialReviewTicker = (params.get("rt") || "").toUpperCase();
+const initialSub = params.get("rsub") === "warrants" ? "warrants" : "offerings";
+
+if (initialMode === "ticker") {
+  if (initialReviewTicker) document.getElementById("review-ticker").value = initialReviewTicker;
+  setReviewMode("ticker");
+} else {
+  setReviewMode("date");
+}
+// Sets active queue + status filter (reads URL or applies queue default), no fetch.
+setSubtab(initialSub, { skipLoad: true });
+
+if (initialTab === "review") {
+  document.querySelector('.tab[data-tab="review"]').click();
+}
+
+const initialTicker = params.get("ticker");
+if (initialTicker) {
+  document.getElementById("ticker-input").value = initialTicker.toUpperCase();
+  research(initialTicker);
+}
+</script>
+
+</body>
+</html>

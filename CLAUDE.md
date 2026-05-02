@@ -11,6 +11,10 @@ Two tabs:
 - **Research** — enter a ticker and get a snapshot, a chart, the historical float records, recent offerings, the latest ownership table (split-adjusted), and recent ownership-table filings.
 - **Review Queue** — list of records to inspect and edit. Two modes: a daily queue filtered by `filed_at` + a category regex, or a ticker view that returns the full history of a single ticker. Edits write back to Postgres.
 
+## Sibling app: Offerings Dashboard
+
+[Offerings Dashboard/](Offerings%20Dashboard/) is a sister app in this same repo, running on port 8766. Same stack (Python proxy + single-file HTML + Postgres), different data: AskEdgar offerings/dilution/news endpoints on the Research tab, and two review sub-queues (offerings + warrants/convertibles). See [Offerings Dashboard/offeringwarrantssummary.md](Offerings%20Dashboard/offeringwarrantssummary.md) for the equivalent overview. Both apps can run side-by-side (8765 + 8766).
+
 ## Run it
 
 ```

@@ -1,0 +1,21 @@
+# Local config with secrets
+config.json
+credentials.md
+
+# Server logs and runtime artifacts
+server_out.log
+server_err.log
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
