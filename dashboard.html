@@ -264,6 +264,20 @@
     background: var(--accent);
     color: #0d1117;
   }
+  .mode-btn {
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    padding: 7px 14px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    border-radius: 0;
+  }
+  .mode-btn + .mode-btn { border-left: 1px solid var(--border); }
+  .mode-btn:hover { color: var(--text); }
+  .mode-btn.active { background: var(--accent); color: #0d1117; }
   .review-table .editable.notes {
     width: 200px;
     min-height: 32px;
@@ -484,7 +498,12 @@
 <div class="tab-content" id="tab-review">
   <section>
     <h2>Review Queue</h2>
-    <form id="review-form" class="meta-row" style="margin-bottom:14px;">
+    <div class="mode-toggle" style="display:inline-flex;gap:0;margin-bottom:14px;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+      <button type="button" class="mode-btn active" data-mode="date">Daily queue</button>
+      <button type="button" class="mode-btn" data-mode="ticker">By ticker</button>
+    </div>
+
+    <form id="review-form-date" class="meta-row" style="margin-bottom:14px;">
       <label>Filed at:
         <input type="date" id="review-date" />
       </label>
@@ -493,6 +512,16 @@
       <button type="button" class="secondary" id="review-yesterday">Yesterday (CDT)</button>
       <span id="review-summary" class="status" style="margin-left:auto;"></span>
     </form>
+
+    <form id="review-form-ticker" class="meta-row" style="margin-bottom:14px;display:none;">
+      <label>Ticker:
+        <input type="text" id="review-ticker" placeholder="e.g. AEHL" autocomplete="off" style="text-transform:uppercase;" />
+      </label>
+      <button type="submit" class="primary">Load history</button>
+      <button type="button" class="secondary" id="review-back-to-daily">← Back to daily queue</button>
+      <span id="review-summary-ticker" class="status" style="margin-left:auto;"></span>
+    </form>
+
     <div id="review-body"></div>
   </section>
 </div>
@@ -560,14 +589,26 @@ function askEdgarLink(ticker, filingUrl, label) {
   return `<a href="${url}" target="_blank" rel="noopener">${escapeHtml(label || "Open")}</a>`;
 }
 
-// External research quick-links rendered next to a ticker. DT = DilutionTracker, AE = AskEdgar dilution.
+// Quick-links rendered next to a ticker.
+//   DT = DilutionTracker (external), AE = AskEdgar dilution (external),
+//   RQ = jump to Review Queue ticker mode (internal).
 function dilutionLinks(ticker) {
   if (!ticker) return "";
   const t = encodeURIComponent(ticker);
+  const e = escapeHtml(ticker);
   return `<span class="dl-icons" onclick="event.stopPropagation()">
-    <a href="https://dilutiontracker.com/app/search/${t}?a=ps7ydb" target="_blank" rel="noopener" title="Open ${escapeHtml(ticker)} on DilutionTracker">DT</a>
-    <a href="https://app.askedgar.io/ticker/${t}/dilution" target="_blank" rel="noopener" title="Open ${escapeHtml(ticker)} on AskEdgar (dilution)">AE</a>
+    <a href="https://dilutiontracker.com/app/search/${t}?a=ps7ydb" target="_blank" rel="noopener" title="Open ${e} on DilutionTracker">DT</a>
+    <a href="https://app.askedgar.io/ticker/${t}/dilution" target="_blank" rel="noopener" title="Open ${e} on AskEdgar (dilution)">AE</a>
+    <a href="?tab=review&rmode=ticker&rt=${t}" onclick="openReviewByTicker('${e}'); return false;" title="Open ${e} in Review Queue (full history)">RQ</a>
   </span>`;
+}
+
+function openReviewByTicker(ticker) {
+  closeReviewPanel();
+  document.querySelector('.tab[data-tab="review"]').click();
+  setReviewMode("ticker", { ticker });
+  document.getElementById("review-ticker").value = ticker;
+  loadReview();
 }
 
 function setStatus(id, msg) { document.getElementById(id).innerHTML = `<div class="status">${msg}</div>`; }
@@ -1157,8 +1198,49 @@ function chicagoYesterdayISO() {
   return d.toISOString().slice(0, 10);
 }
 
-document.getElementById("review-form").addEventListener("submit", (e) => {
+let reviewMode = "date"; // "date" | "ticker"
+
+function setReviewMode(mode, opts = {}) {
+  reviewMode = mode;
+  document.querySelectorAll(".mode-btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+  document.getElementById("review-form-date").style.display   = mode === "date"   ? "" : "none";
+  document.getElementById("review-form-ticker").style.display = mode === "ticker" ? "" : "none";
+  // URL state
+  const u = new URL(window.location);
+  u.searchParams.set("rmode", mode);
+  if (mode === "ticker" && opts.ticker) {
+    u.searchParams.set("rt", opts.ticker.toUpperCase());
+  } else if (mode === "date") {
+    u.searchParams.delete("rt");
+  }
+  history.replaceState(null, "", u.pathname + u.search);
+  // Empty state when switching with no value
+  if (mode === "ticker" && !document.getElementById("review-ticker").value) {
+    document.getElementById("review-body").innerHTML =
+      `<div class="status">Enter a ticker above to load its full history.</div>`;
+    document.getElementById("review-summary-ticker").textContent = "";
+  }
+}
+
+document.querySelectorAll(".mode-btn").forEach((b) => {
+  b.addEventListener("click", () => {
+    if (b.dataset.mode === reviewMode) return;
+    setReviewMode(b.dataset.mode);
+    if (reviewMode === "date") loadReview();
+    else if (document.getElementById("review-ticker").value) loadReview();
+  });
+});
+
+document.getElementById("review-form-date").addEventListener("submit", (e) => {
   e.preventDefault();
+  loadReview();
+});
+document.getElementById("review-form-ticker").addEventListener("submit", (e) => {
+  e.preventDefault();
+  loadReview();
+});
+document.getElementById("review-back-to-daily").addEventListener("click", () => {
+  setReviewMode("date");
   loadReview();
 });
 document.getElementById("review-today").addEventListener("click", () => {
@@ -1175,13 +1257,20 @@ document.getElementById("review-date").value = chicagoYesterdayISO();
 
 async function loadReview() {
   reviewLoadedOnce = true;
-  const date = document.getElementById("review-date").value;
-  const summary = document.getElementById("review-summary");
   const body = document.getElementById("review-body");
   body.innerHTML = `<div class="status">Loading…</div>`;
-  summary.textContent = "";
 
-  let main, pinned;
+  if (reviewMode === "ticker") {
+    return loadReviewByTicker();
+  }
+  return loadReviewByDate();
+}
+
+async function loadReviewByDate() {
+  const date = document.getElementById("review-date").value;
+  const summary = document.getElementById("review-summary");
+  summary.textContent = "";
+  let main;
   try {
     main = await fetch(`/api/review?filed_at=${encodeURIComponent(date)}`).then((r) => r.json());
     if (main.status !== "success") throw new Error(main?.error?.message || "review failed");
@@ -1214,9 +1303,44 @@ async function loadReview() {
   renderReviewTable(all);
 }
 
+async function loadReviewByTicker() {
+  const ticker = (document.getElementById("review-ticker").value || "").trim().toUpperCase();
+  const summary = document.getElementById("review-summary-ticker");
+  summary.textContent = "";
+  if (!ticker) {
+    document.getElementById("review-body").innerHTML =
+      `<div class="status">Enter a ticker above to load its full history.</div>`;
+    return;
+  }
+  document.getElementById("review-ticker").value = ticker;
+  // Persist ticker in URL
+  const u = new URL(window.location);
+  u.searchParams.set("rmode", "ticker");
+  u.searchParams.set("rt", ticker);
+  history.replaceState(null, "", u.pathname + u.search);
+
+  let main;
+  try {
+    main = await fetch(`/api/review?ticker=${encodeURIComponent(ticker)}`).then((r) => r.json());
+    if (main.status !== "success") throw new Error(main?.error?.message || "review failed");
+  } catch (e) {
+    setError("review-body", `Failed to load review queue: ${e.message}`);
+    return;
+  }
+
+  // No pin merge in ticker mode — the SQL already returns the full ticker history.
+  staleUrls = new Set();
+  reviewRowsByUrl = new Map(main.results.map((r) => [r.document_url, r]));
+  dirtyByUrl = new Map();
+
+  summary.innerHTML = `<strong>${main.count}</strong> records for <strong>${escapeHtml(ticker)}</strong> · all forms, all dates`;
+  renderReviewTable(main.results);
+}
+
 function renderReviewTable(rows) {
   if (!rows.length) {
-    document.getElementById("review-body").innerHTML = `<div class="status">No records for this date.</div>`;
+    const msg = reviewMode === "ticker" ? "No records for this ticker." : "No records for this date.";
+    document.getElementById("review-body").innerHTML = `<div class="status">${msg}</div>`;
     return;
   }
   const html = `
@@ -1695,9 +1819,24 @@ document.getElementById("search-form").addEventListener("submit", (e) => {
 
 const params = new URLSearchParams(window.location.search);
 const initialTab = params.get("tab");
+// Restore review queue mode/state from URL.
+const initialMode = params.get("rmode") === "ticker" ? "ticker" : "date";
+const initialReviewTicker = (params.get("rt") || "").toUpperCase();
+if (initialMode === "ticker") {
+  if (initialReviewTicker) {
+    document.getElementById("review-ticker").value = initialReviewTicker;
+  }
+  setReviewMode("ticker");
+} else {
+  setReviewMode("date");
+}
+
 if (initialTab === "review") {
+  // Tab handler will fire loadReview() the first time the review tab opens,
+  // and it'll route based on the mode we just set above.
   document.querySelector('.tab[data-tab="review"]').click();
 }
+
 const initialTicker = params.get("ticker");
 if (initialTicker) {
   document.getElementById("ticker-input").value = initialTicker.toUpperCase();

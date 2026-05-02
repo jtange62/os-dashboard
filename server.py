@@ -116,6 +116,16 @@ REVIEW_QUERY = f"""
     LIMIT 1000
 """
 
+# Ticker mode: full history for a single ticker, no category/date filter,
+# so the analyst can fix older records they spot while researching.
+REVIEW_BY_TICKER_QUERY = f"""
+    SELECT {REVIEW_COLUMNS}
+    FROM historical_float_final hf
+    WHERE hf.ticker = %(ticker)s
+    ORDER BY hf.date_final DESC NULLS LAST, hf.filed_at DESC NULLS LAST
+    LIMIT 1000
+"""
+
 
 def _json_default(obj):
     if isinstance(obj, decimal.Decimal):
@@ -221,6 +231,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self._send_json(200, {"status": "success", "count": len(mapping), "results": mapping})
 
     def _handle_review(self, params):
+        ticker = (params.get("ticker", [""])[0] or "").strip().upper()
+
+        if ticker:
+            with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(REVIEW_BY_TICKER_QUERY, {"ticker": ticker})
+                rows = cur.fetchall()
+            self._send_json(
+                200,
+                {
+                    "status": "success",
+                    "mode": "ticker",
+                    "ticker": ticker,
+                    "count": len(rows),
+                    "results": rows,
+                },
+            )
+            return
+
         filed_at_raw = (params.get("filed_at", [""])[0] or "").strip()
         if filed_at_raw:
             filed_at = datetime.date.fromisoformat(filed_at_raw)
@@ -235,6 +263,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             200,
             {
                 "status": "success",
+                "mode": "date",
                 "filed_at": filed_at.isoformat(),
                 "count": len(rows),
                 "results": rows,
