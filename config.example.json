@@ -1,6 +1,10 @@
 {
   "askedgar_api_key": "YOUR_ASKEDGAR_API_KEY",
   "secapi_io_key": "YOUR_SEC_API_IO_KEY",
+  "anthropic_api_key": "YOUR_ANTHROPIC_API_KEY",
+  "elastic_url": "https://your-cluster.example.com:443",
+  "elastic_api_key": "YOUR_ELASTIC_API_KEY",
+  "elastic_filings_index": "stock_filings",
   "postgres": {
     "host": "your-postgres-host.example.com",
     "port": 5432,

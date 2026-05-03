@@ -38,10 +38,19 @@ with CONFIG_PATH.open(encoding="utf-8") as _f:
 
 ASKEDGAR_KEY = _CFG["askedgar_api_key"]
 SECAPI_KEY = _CFG["secapi_io_key"]
+ANTHROPIC_KEY = _CFG.get("anthropic_api_key", "")
+ELASTIC_URL = (_CFG.get("elastic_url") or "").rstrip("/")
+ELASTIC_KEY = _CFG.get("elastic_api_key", "")
+ELASTIC_INDEX = _CFG.get("elastic_filings_index", "stock_filings")
 PORT = int(_CFG.get("port", 8765))
 
 ASKEDGAR_BASE = "https://eapi.askedgar.io"
 SECAPI_URL = "https://api.sec-api.io"
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_MODEL = "claude-opus-4-7"
+
+# ~5000 tokens worth of filing text. 1 token ~= 4 chars for English prose.
+FILING_TEXT_MAX_CHARS = 20000
 
 DB_CONFIG = {
     **_CFG["postgres"],
@@ -73,7 +82,7 @@ HISTORICAL_COLUMNS = """
     affiliate_percent, insider_percent, institutions_percent,
     is_adr, ads_ratio, foreign_company, number_classes, classes_details,
     ownership_source, source_date, details, category, market_cap, cik,
-    notes, created_at, updated_at
+    notes, ai_analysis, created_at, updated_at
 """
 
 REVIEW_COLUMNS = """
@@ -101,6 +110,7 @@ REVIEW_COLUMNS = """
     hf.classes_details,
     hf.ownership_source,
     hf.notes,
+    hf.ai_analysis,
     hf.market_cap,
     hf.updated_at
 """
@@ -162,6 +172,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._handle_review_by_urls()
             elif url.path == "/api/review/update":
                 self._handle_review_update()
+            elif url.path == "/api/ai-analyze":
+                self._handle_ai_analyze()
             else:
                 self.send_error(404, "Not Found")
         except Exception as e:
@@ -177,6 +189,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "/api/offerings": "/v1/offerings",
             "/api/reverse-splits": "/v1/reverse-splits",
             "/api/news-basic": "/v1/news-basic",
+            "/api/screener": "/v1/screener",
         }
         if path in askedgar_routes:
             flat = [(k, v) for k, vs in params.items() for v in vs]
@@ -374,6 +387,263 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         )
         self._forward(req)
 
+    def _handle_ai_analyze(self):
+        if not ANTHROPIC_KEY:
+            self._send_json(500, {"status": "error", "error": {"code": "no_anthropic_key", "message": "anthropic_api_key missing in config.json"}})
+            return
+        body = self._read_json_body()
+        document_url = body.get("document_url")
+        force = bool(body.get("force"))
+        if not document_url:
+            self._send_json(400, {"status": "error", "error": {"code": "missing_pk", "message": "document_url required"}})
+            return
+
+        with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"SELECT {HISTORICAL_COLUMNS} FROM historical_float_final WHERE document_url = %s",
+                (document_url,),
+            )
+            row = cur.fetchone()
+        if not row:
+            self._send_json(404, {"status": "error", "error": {"code": "not_found", "message": "row not found"}})
+            return
+        if row.get("ai_analysis") and not force:
+            self._send_json(200, {"status": "success", "cached": True, "analysis": row["ai_analysis"]})
+            return
+
+        ticker = (row.get("ticker") or "").upper()
+        if not ticker:
+            self._send_json(400, {"status": "error", "error": {"code": "no_ticker", "message": "row has no ticker"}})
+            return
+
+        try:
+            ctx = self._gather_ai_context(ticker, row)
+            analysis = self._call_anthropic(row, ctx)
+        except Exception as e:
+            self._send_json(502, {"status": "error", "error": {"code": "analyzer_failed", "message": str(e)}})
+            return
+
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE historical_float_final SET ai_analysis = %s, updated_at = NOW() WHERE document_url = %s",
+                (analysis, document_url),
+            )
+            conn.commit()
+        self._send_json(200, {"status": "success", "cached": False, "analysis": analysis})
+
+    @staticmethod
+    def _askedgar_get(path, params):
+        qs = urllib.parse.urlencode(params)
+        target = f"{ASKEDGAR_BASE}{path}?{qs}"
+        req = urllib.request.Request(target, headers={"API-KEY": ASKEDGAR_KEY})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+            enc = resp.headers.get("Content-Encoding")
+            if enc:
+                data = Handler._decode_body(data, enc)
+        return json.loads(data.decode("utf-8")) if data else {}
+
+    @staticmethod
+    def _get_filing_text(document_url):
+        """Fetch source text for an SEC filing or Benzinga press release from Elasticsearch.
+        - sec.gov URLs hit the `stock_filings` index, term match on `linkToFilingDetails`,
+          return `textContent`.
+        - benzinga URLs hit the `news` index, term match on `url`, return `body`
+          (or `teaser` if body is empty).
+        Returns truncated string, or None if not found / not configured."""
+        if not (ELASTIC_URL and ELASTIC_KEY):
+            return None
+        u = (document_url or "").lower()
+        if "benzinga" in u:
+            index = "news"
+            url_field = "url"
+            text_fields = ("body", "teaser")
+        else:
+            index = ELASTIC_INDEX
+            url_field = "linkToFilingDetails"
+            text_fields = ("textContent",)
+
+        body = json.dumps({
+            "query": {"term": {url_field: document_url}},
+            "size": 1,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{ELASTIC_URL}/{index}/_search",
+            data=body,
+            headers={
+                "Authorization": f"ApiKey {ELASTIC_KEY}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        hits = ((data.get("hits") or {}).get("hits") or [])
+        if not hits:
+            return None
+        src = hits[0].get("_source") or {}
+        text = ""
+        for f in text_fields:
+            v = src.get(f)
+            if v:
+                text = v
+                break
+        if not text:
+            return None
+        if len(text) > FILING_TEXT_MAX_CHARS:
+            text = text[:FILING_TEXT_MAX_CHARS] + "\n\n[...truncated...]"
+        return text
+
+    def _gather_ai_context(self, ticker, row):
+        ctx = {}
+        # Filing text (only for sec.gov / benzinga URLs — that's where the OS came from)
+        doc_url = (row.get("document_url") or "").lower()
+        if "sec.gov" in doc_url or "benzinga" in doc_url:
+            try:
+                txt = self._get_filing_text(row.get("document_url"))
+                if txt:
+                    ctx["filing_text"] = txt
+            except Exception as e:
+                ctx["filing_text_error"] = str(e)
+
+        # Historical float (5 most recent, excluding the row itself if it appears)
+        try:
+            hist = self._askedgar_get("/v1/historical-float-pro", {"ticker": ticker, "limit": 10, "page": 1})
+            results = (hist or {}).get("results") or []
+            results = [r for r in results if r.get("document_url") != row.get("document_url")][:5]
+            ctx["historical_float"] = results
+        except Exception as e:
+            ctx["historical_float_error"] = str(e)
+
+        # News (7 most recent, excluding form_type 'grok' and 'jmt415')
+        try:
+            news = self._askedgar_get("/v1/news-basic", {"ticker": ticker, "limit": 30, "page": 1})
+            EXCLUDED = {"grok", "jmt415"}
+            kept = []
+            for n in (news or {}).get("results") or []:
+                ft = (n.get("form_type") or "").strip().lower()
+                if ft in EXCLUDED:
+                    continue
+                kept.append(n)
+                if len(kept) >= 7:
+                    break
+            ctx["news"] = kept
+        except Exception as e:
+            ctx["news_error"] = str(e)
+
+        # Offerings (3 most recent)
+        try:
+            off = self._askedgar_get("/v1/offerings", {"ticker": ticker, "limit": 3, "page": 1})
+            ctx["offerings"] = (off or {}).get("results") or []
+        except Exception as e:
+            ctx["offerings_error"] = str(e)
+
+        # Reverse splits (most recent)
+        try:
+            sp = self._askedgar_get("/v1/reverse-splits", {"ticker": ticker, "limit": 5, "page": 1})
+            splits = (sp or {}).get("results") or []
+            ctx["reverse_splits"] = splits
+            ctx["latest_split"] = splits[0] if splits else None
+        except Exception as e:
+            ctx["splits_error"] = str(e)
+
+        # Latest ownership
+        try:
+            ow = self._askedgar_get("/v1/ownership", {"ticker": ticker, "limit": 1})
+            ctx["ownership"] = (ow or {}).get("results") or []
+        except Exception as e:
+            ctx["ownership_error"] = str(e)
+
+        # Screener (current price + market cap)
+        try:
+            sc = self._askedgar_get("/v1/screener", {"ticker": ticker})
+            results = (sc or {}).get("results") or []
+            ctx["screener"] = results[0] if results else None
+        except Exception as e:
+            ctx["screener_error"] = str(e)
+
+        return ctx
+
+    @staticmethod
+    def _call_anthropic(row, ctx):
+        sections = []
+        sections.append("=== ROW UNDER REVIEW ===")
+        sections.append(json.dumps(row, default=_json_default, indent=2))
+        if ctx.get("filing_text"):
+            sections.append("\n=== SOURCE FILING TEXT (truncated to ~5000 tokens; this is where the OS / float values came from) ===")
+            sections.append(ctx["filing_text"])
+        elif ctx.get("filing_text_error"):
+            sections.append("\n=== SOURCE FILING TEXT ===")
+            sections.append(f"(failed to fetch: {ctx['filing_text_error']})")
+        sections.append("\n=== CURRENT PRICE / SCREENER ===")
+        sections.append(json.dumps(ctx.get("screener"), default=_json_default, indent=2))
+        sections.append("\n=== 5 MOST RECENT HISTORICAL FLOAT RECORDS (excluding this row) ===")
+        sections.append(json.dumps(ctx.get("historical_float", []), default=_json_default, indent=2))
+        sections.append("\n=== 7 MOST RECENT NEWS / FILINGS (excludes form_type grok, jmt415) ===")
+        sections.append(json.dumps(ctx.get("news", []), default=_json_default, indent=2))
+        sections.append("\n=== 3 MOST RECENT OFFERINGS ===")
+        sections.append(json.dumps(ctx.get("offerings", []), default=_json_default, indent=2))
+        sections.append("\n=== LATEST OWNERSHIP (raw, not split-adjusted; see latest split below) ===")
+        sections.append(json.dumps(ctx.get("ownership", []), default=_json_default, indent=2))
+        sections.append("\n=== MOST RECENT REVERSE SPLIT ===")
+        sections.append(json.dumps(ctx.get("latest_split"), default=_json_default, indent=2))
+        user_content = "\n".join(sections)
+
+        system_prompt = (
+            "You are a data analyst at AskEdgar reviewing a single historical_float_final row. "
+            "Your job: tell the analyst whether the OS / float values look correct, or flag possible reasons they may be wrong.\n\n"
+            "When SOURCE FILING TEXT is provided, it is the most authoritative input -- it is the actual filing text "
+            "the OS / float values were extracted from. Cross-check the row's outstanding_shares against numbers in "
+            "the filing text and call out any mismatch (wrong number picked, share class confused, percent vs absolute, etc.).\n\n"
+            "Things to look for:\n"
+            "- float_final or tradable_float_final < 500k or negative -> often means affiliate_shares or restricted_shares is wrong. "
+            "Check recent offerings + news for share issuances that should have been counted as restricted.\n"
+            "- A big drop in OS or float vs the previous historical record may be normal if a reverse split happened around that date. "
+            "Confirm by checking the most recent reverse split.\n"
+            "- For split-affected rows: verify the split actually occurred. Post-split price should usually be > $1, "
+            "and recent news should mention the effective date.\n"
+            "- If outstanding_final is very low, check whether outstanding_shares (raw) and outstanding_shares_reported diverge sharply, "
+            "or whether the AI may have extracted the wrong number from the source filing -- the FILING TEXT will tell you.\n"
+            "- Most important red flags: OS or float < 500k (especially < 100k or negative). "
+            "Negatives are almost always wrong, unless the company is a brand-new SPAC or similar.\n\n"
+            "Output: 4-8 sentences, plain text, no markdown headers. Start with a clear verdict: "
+            "'Values look normal' OR 'Possible issue:' followed by the most likely cause(s) and what the analyst should check. "
+            "Be concise -- this displays inside a small side panel."
+        )
+
+        payload = {
+            "model": ANTHROPIC_MODEL,
+            "max_tokens": 16000,
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "high"},
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_content}],
+        }
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            ANTHROPIC_URL,
+            data=body,
+            headers={
+                "x-api-key": ANTHROPIC_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                resp_data = resp.read()
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Anthropic HTTP {e.code}: {err_body}")
+        parsed = json.loads(resp_data.decode("utf-8"))
+        # content is a list of blocks; we want the text block(s).
+        text_parts = []
+        for block in parsed.get("content") or []:
+            if block.get("type") == "text" and block.get("text"):
+                text_parts.append(block["text"])
+        return ("\n".join(text_parts)).strip() or "(no analysis returned)"
+
     def _forward(self, req):
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
@@ -421,7 +691,20 @@ class ReusableTCPServer(socketserver.ThreadingTCPServer):
     daemon_threads = True
 
 
+def _ensure_schema():
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "ALTER TABLE historical_float_final "
+                "ADD COLUMN IF NOT EXISTS ai_analysis TEXT"
+            )
+            conn.commit()
+    except Exception as e:
+        sys.stderr.write(f"[server] schema check failed: {e}\n")
+
+
 def main():
+    _ensure_schema()
     with ReusableTCPServer(("127.0.0.1", PORT), Handler) as httpd:
         print(f"OS Dashboard running at http://localhost:{PORT}/")
         print("Press Ctrl+C to stop.")

@@ -371,6 +371,20 @@
     resize: vertical;
   }
 
+  .ai-analysis-body {
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .ai-analysis-text { white-space: pre-wrap; }
+  .ai-analysis-loading {
+    color: var(--accent);
+    font-style: italic;
+  }
+  .ai-analysis-error {
+    color: var(--red);
+    font-size: 12px;
+  }
+
   /* Dilution research quick-links next to ticker */
   .dl-icons {
     display: inline-flex;
@@ -790,7 +804,7 @@ async function research(ticker) {
   setStatus("ownership-body", "Loading…");
   setStatus("filings-body", "Loading…");
 
-  const [hist, restricted, owners, splits, offerings, filings, news] = await Promise.allSettled([
+  const [hist, restricted, owners, splits, offerings, filings, news, screener] = await Promise.allSettled([
     fetchHistoricalFloat(ticker),
     fetchRestrictedShares(ticker),
     fetchOwnership(ticker),
@@ -798,9 +812,10 @@ async function research(ticker) {
     fetchOfferings(ticker),
     fetchFilings(ticker),
     fetchNews(ticker),
+    fetchScreener(ticker),
   ]);
 
-  renderResearchHistory(ticker, hist, restricted);
+  renderResearchHistory(ticker, hist, restricted, screener);
   renderNews(ticker, news);
   renderReverseSplits(ticker, splits);
   renderOfferings(ticker, offerings);
@@ -846,6 +861,13 @@ async function fetchNews(ticker) {
   return j;
 }
 
+async function fetchScreener(ticker) {
+  const r = await fetch(`/api/screener?ticker=${encodeURIComponent(ticker)}`);
+  const j = await r.json();
+  if (!r.ok || j.status === "error") throw new Error(j?.error?.message || `HTTP ${r.status}`);
+  return j;
+}
+
 async function fetchOwnership(ticker) {
   const r = await fetch(`/api/ownership?ticker=${encodeURIComponent(ticker)}&limit=5`);
   const j = await r.json();
@@ -871,7 +893,7 @@ async function fetchFilings(ticker) {
   return j;
 }
 
-function renderResearchHistory(ticker, res, restrictedRes) {
+function renderResearchHistory(ticker, res, restrictedRes, screenerRes) {
   if (res.status === "rejected") {
     setError("snapshot-body", `Failed to load: ${res.reason.message}`);
     setError("history-body", `Failed to load: ${res.reason.message}`);
@@ -894,12 +916,13 @@ function renderResearchHistory(ticker, res, restrictedRes) {
     }
   }
   rows.sort((a, b) => (b.reported_date || b.filed_at || "").localeCompare(a.reported_date || a.filed_at || ""));
-  renderSnapshot(rows[0]);
+  const screener = (screenerRes && screenerRes.status === "fulfilled" && (screenerRes.value.results || [])[0]) || null;
+  renderSnapshot(rows[0], screener);
   renderHistoryTable(ticker, rows);
   renderChart(rows);
 }
 
-function renderSnapshot(r) {
+function renderSnapshot(r, screener) {
   const aff = (num(r.affiliate_percent) || 0) * 100;
   const affCls = aff >= 50 ? " high" : aff >= 30 ? " warn" : "";
   const floatVal = num(r.float);
@@ -907,8 +930,11 @@ function renderSnapshot(r) {
   const floatBad = floatVal != null && floatVal < 0;
   const tradBad = tradVal != null && tradVal < 0;
 
+  const screenerPrice = screener && screener.price != null ? Number(screener.price) : null;
+  const priceLow = screenerPrice != null && screenerPrice < 1;
   const cards = [
     { label: "Ticker", value: `<span class="tv-ticker" data-symbol="${escapeHtml(r.ticker || "")}" style="cursor:pointer;">${escapeHtml(r.ticker || "")}</span> ${dilutionLinks(r.ticker)}`, sub: r.cik ? `CIK ${escapeHtml(r.cik)}` : (r.classes_details ? escapeHtml(r.classes_details) : "") },
+    { label: "Price", value: screenerPrice == null ? "—" : "$" + screenerPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 }), valueCls: priceLow ? " warn" : "", sub: screener && screener.exchange ? escapeHtml(screener.exchange) : "" },
     { label: "Outstanding", value: fmtInt(r.outstanding_shares) },
     { label: "Float", value: fmtInt(r.float), valueCls: floatBad ? " bad" : "", sub: floatBad ? "NEGATIVE" : `Tradable: ${fmtInt(r.tradable_float)}` },
     { label: "Tradable Float", value: fmtInt(r.tradable_float), valueCls: tradBad ? " bad" : "", sub: tradBad ? "NEGATIVE" : "" },
@@ -1149,19 +1175,28 @@ function renderOwnership(ticker, res, splitsRes) {
     const t = (o.owner_type || "").toLowerCase();
     return t.includes("investor") || t.includes("10+");
   };
-  const nonInvestorOwners = owners.filter((o) => !isInvestor(o));
-  const sumField = (field) => nonInvestorOwners.reduce((s, o) => s + (num(o[field]) || 0), 0);
-  const totals = {
-    common:        sumField("common_shares_amount"),
-    preferred:     sumField("preferred_shares_amount"),
-    options:       sumField("options_amount"),
-    warrants:      sumField("warrants_amount"),
-    convertibles:  sumField("shares_underlying_convertibles"),
-    rsu:           sumField("restricted_stock_units"),
+  // Affiliate = all non-investors PLUS investors tagged "10+" by AskEdgar.
+  const isAffiliate = (o) => {
+    if (!isInvestor(o)) return true;
+    return (o.owner_type || "").toLowerCase().includes("10+");
   };
-  const totalCommonRaw = totals.common;
-  const totalCommonAdj = totalCommonRaw * factor;
+  const nonInvestorOwners = owners.filter((o) => !isInvestor(o));
+  const affiliateOwners = owners.filter(isAffiliate);
+  const sumOver = (rows, field) => rows.reduce((s, o) => s + (num(o[field]) || 0), 0);
+  const buildTotals = (rows) => ({
+    common:       sumOver(rows, "common_shares_amount"),
+    preferred:    sumOver(rows, "preferred_shares_amount"),
+    options:      sumOver(rows, "options_amount"),
+    warrants:     sumOver(rows, "warrants_amount"),
+    convertibles: sumOver(rows, "shares_underlying_convertibles"),
+    rsu:          sumOver(rows, "restricted_stock_units"),
+  });
+  const totals = buildTotals(nonInvestorOwners);
+  const affiliateTotals = buildTotals(affiliateOwners);
+  const totalCommonAdj = totals.common * factor;
   const totalCommonPct = totalOSadj ? (totalCommonAdj / totalOSadj) * 100 : null;
+  const affiliateCommonAdj = affiliateTotals.common * factor;
+  const affiliateCommonPct = totalOSadj ? (affiliateCommonAdj / totalOSadj) * 100 : null;
 
   const splitNote = splitsApplied.length
     ? `<span style="color:var(--yellow);">${splitsApplied.length} split(s) since reported_date · adjustment factor ${factor.toFixed(4)} (${splitsApplied.map(s => `${num(s.split_from)}:${num(s.split_to)} on ${fmtDate(s.execution_date)}`).join(", ")})</span>`
@@ -1173,6 +1208,7 @@ function renderOwnership(ticker, res, splitsRes) {
       <span>Owners listed: <strong>${owners.length}</strong></span>
       ${totalOSraw ? `<span>Outstanding ${factor !== 1 ? "(adjusted)" : "(per filing)"}: <strong>${fmtInt(totalOSadj)}</strong>${factor !== 1 ? ` <span class="sub" style="color:var(--muted);">raw: ${fmtInt(totalOSraw)}</span>` : ""}</span>` : ""}
       <span>Sum of common · non-investor only ${factor !== 1 ? "(adjusted)" : ""}: <strong>${fmtInt(totalCommonAdj)}</strong>${totalOSadj ? ` (${((totalCommonAdj / totalOSadj) * 100).toFixed(2)}%)` : ""}</span>
+      <span title="Non-investor + investors owning >=10%">Affiliate common ${factor !== 1 ? "(adjusted)" : ""}: <strong>${fmtInt(affiliateCommonAdj)}</strong>${totalOSadj ? ` (${((affiliateCommonAdj / totalOSadj) * 100).toFixed(2)}%)` : ""}</span>
       ${splitNote}
     </div>
     <table>
@@ -1220,6 +1256,17 @@ function renderOwnership(ticker, res, splitsRes) {
           ${adjustedCell(totals.warrants, factor)}
           ${adjustedCell(totals.convertibles, factor)}
           ${adjustedCell(totals.rsu, factor)}
+          <td colspan="4"></td>
+        </tr>
+        <tr style="font-weight:600;background:var(--bg);">
+          <td colspan="3" title="Non-investor + investors owning >=10%">Total affiliate (${affiliateOwners.length} of ${owners.length})</td>
+          ${adjustedCell(affiliateTotals.common, factor)}
+          <td class="num">${affiliateCommonPct == null ? "—" : affiliateCommonPct.toFixed(2) + "%"}</td>
+          ${adjustedCell(affiliateTotals.preferred, factor)}
+          ${adjustedCell(affiliateTotals.options, factor)}
+          ${adjustedCell(affiliateTotals.warrants, factor)}
+          ${adjustedCell(affiliateTotals.convertibles, factor)}
+          ${adjustedCell(affiliateTotals.rsu, factor)}
           <td colspan="4"></td>
         </tr>
       </tfoot>
@@ -2001,6 +2048,46 @@ function openReviewPanel(url) {
   const tr = document.querySelector(`#review-body tr[data-url="${cssEscape(url)}"]`);
   if (tr) tr.classList.add("active");
   renderReviewPanel(r);
+  // Kick off AI analysis if this row hasn't been analyzed yet.
+  if (!r.ai_analysis) triggerAiAnalysis(url, false);
+}
+
+function renderAiAnalysis(r) {
+  if (r.ai_analysis) {
+    return `<div class="ai-analysis-text">${escapeHtml(r.ai_analysis)}</div>`;
+  }
+  return `<div class="ai-analysis-loading">Analyzing — please keep this panel open. May take 30–60s…</div>`;
+}
+
+async function triggerAiAnalysis(url, force) {
+  const body = document.getElementById("ai-analysis-body");
+  if (body) {
+    body.innerHTML = `<div class="ai-analysis-loading">Analyzing — please keep this panel open. May take 30–60s…</div>`;
+  }
+  try {
+    const r = await fetch("/api/ai-analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ document_url: url, force: !!force }),
+    });
+    const j = await r.json();
+    if (!r.ok || j.status === "error") throw new Error(j?.error?.message || `HTTP ${r.status}`);
+    const row = reviewRowsByUrl.get(url);
+    if (row) row.ai_analysis = j.analysis;
+    // Only update the DOM if this row is still the open panel.
+    const panel = document.getElementById("review-panel");
+    if (panel.classList.contains("open") && panel.dataset.url === url) {
+      const target = document.getElementById("ai-analysis-body");
+      if (target) {
+        target.innerHTML = `<div class="ai-analysis-text">${escapeHtml(j.analysis || "")}</div>`;
+      }
+    }
+  } catch (e) {
+    const target = document.getElementById("ai-analysis-body");
+    if (target) {
+      target.innerHTML = `<div class="ai-analysis-error">Analysis failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
 }
 
 function closeReviewPanel() {
@@ -2058,6 +2145,11 @@ function renderReviewPanel(r) {
         <div class="label">Last DB update</div>
         <div class="value">${fmtDateTime(r.updated_at)}</div>
       </div>
+    </div>
+
+    <div class="panel-section">
+      <h4>AI Analysis <a href="#" id="ai-regenerate-btn" class="status" style="font-size:11px;margin-left:8px;text-decoration:underline;">Regenerate</a></h4>
+      <div id="ai-analysis-body" class="ai-analysis-body">${renderAiAnalysis(r)}</div>
     </div>
 
     <div class="panel-section">
@@ -2123,6 +2215,15 @@ function renderReviewPanel(r) {
     el.addEventListener("input", () => onEditableChange(el));
     el.addEventListener("change", () => onEditableChange(el));
   });
+
+  // Regenerate AI analysis on click.
+  const regenBtn = content.querySelector("#ai-regenerate-btn");
+  if (regenBtn) {
+    regenBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      triggerAiAnalysis(url, true);
+    });
+  }
 
   // Position indicator + nav button state.
   const urls = [...reviewRowsByUrl.keys()];
