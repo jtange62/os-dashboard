@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>OS Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://s3.tradingview.com/tv.js"></script>
 <style>
   :root {
     --bg: #0d1117;
@@ -240,7 +241,11 @@
     overflow: auto;
   }
   .review-table { font-size: 12px; }
-  .review-table th { font-size: 10px; }
+  .review-table th { font-size: 10px; white-space: nowrap; }
+  .review-table th.sortable { cursor: pointer; user-select: none; }
+  .review-table th.sortable:hover { color: var(--accent); }
+  .review-table th.sortable .sort-arrow { margin-left: 3px; font-size: 9px; opacity: 0.4; }
+  .review-table th.sortable.sort-active .sort-arrow { opacity: 1; color: var(--accent); }
   .review-table td { padding: 6px 8px; }
   .review-table tbody tr { cursor: pointer; }
   .review-table td.row-key {
@@ -444,6 +449,34 @@
   }
   .toast.success { border-color: var(--green); }
   .toast.error { border-color: var(--red); color: var(--red); }
+
+  /* News rows */
+  .news-row { cursor: pointer; }
+  .news-row:hover td { background: var(--panel-2); }
+  .news-summary-snippet {
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 2px;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* TradingView hover popup */
+  #tv-popup {
+    display: none;
+    position: fixed;
+    width: 600px;
+    height: 400px;
+    background: #1e1e1e;
+    border: 2px solid #555;
+    z-index: 9999;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+    border-radius: 6px;
+    overflow: hidden;
+  }
 </style>
 </head>
 <body>
@@ -479,6 +512,14 @@
     <section>
       <h2>Historical Float Records</h2>
       <div id="history-body" class="scroll-x scroll"></div>
+    </section>
+    <section>
+      <h2>Recent News &amp; Filings</h2>
+      <div id="news-body" class="scroll-x scroll"></div>
+    </section>
+    <section>
+      <h2>Recent Reverse Splits</h2>
+      <div id="splits-body" class="scroll-x scroll"></div>
     </section>
     <section>
       <h2>Recent Offerings</h2>
@@ -550,7 +591,28 @@
   </div>
 </aside>
 
+<aside id="news-panel" class="review-panel" aria-hidden="true">
+  <div class="panel-backdrop" data-news-close></div>
+  <div class="panel-card">
+    <div class="panel-header">
+      <div>
+        <h3 id="news-panel-title">Summary</h3>
+        <div class="meta" id="news-panel-subtitle"></div>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="close-btn" id="news-prev" title="Previous (k / ↑)" aria-label="Previous">↑</button>
+        <span id="news-position" class="status" style="font-size:11px;min-width:54px;text-align:center;"></span>
+        <button type="button" class="close-btn" id="news-next" title="Next (j / ↓)" aria-label="Next">↓</button>
+        <span style="width:8px;"></span>
+        <button type="button" class="close-btn" data-news-close title="Close (Esc)" aria-label="Close">×</button>
+      </div>
+    </div>
+    <div id="news-panel-content"></div>
+  </div>
+</aside>
+
 <div id="toast" style="display:none;" class="toast"></div>
+<div id="tv-popup"><div id="tv-chart-container" style="width:100%;height:100%;"></div></div>
 
 <script>
 // ---------------- shared utils ----------------
@@ -627,6 +689,61 @@ function toast(msg, kind = "success") {
   toastTimer = setTimeout(() => { el.style.display = "none"; }, 3500);
 }
 
+// ---------------- TradingView hover chart ----------------
+const tvPopup = document.getElementById("tv-popup");
+let tvHideTimeout = null;
+let tvCurrentSymbol = null;
+
+function tvShow(el, symbol) {
+  if (!symbol) return;
+  if (tvHideTimeout) { clearTimeout(tvHideTimeout); tvHideTimeout = null; }
+  const rect = el.getBoundingClientRect();
+  // Position to the right of the element; if it would overflow, position to the left
+  let left = rect.right + 10;
+  if (left + 600 > window.innerWidth) left = Math.max(0, rect.left - 610);
+  let top = rect.top;
+  if (top + 400 > window.innerHeight) top = Math.max(0, window.innerHeight - 410);
+  tvPopup.style.left = left + "px";
+  tvPopup.style.top = top + "px";
+  tvPopup.style.display = "block";
+
+  if (tvCurrentSymbol !== symbol) {
+    tvCurrentSymbol = symbol;
+    const container = document.getElementById("tv-chart-container");
+    container.innerHTML = "";
+    new TradingView.widget({
+      container_id: "tv-chart-container",
+      autosize: true,
+      symbol: symbol,
+      interval: "D",
+      timezone: "America/New_York",
+      theme: "dark",
+      style: "1",
+      locale: "en",
+      toolbar_bg: "#1e1e1e",
+      enable_publishing: false,
+      allow_symbol_change: false,
+      hide_side_toolbar: true,
+    });
+  }
+}
+
+function tvScheduleHide() {
+  tvHideTimeout = setTimeout(() => { tvPopup.style.display = "none"; }, 300);
+}
+
+tvPopup.addEventListener("mouseenter", () => { if (tvHideTimeout) clearTimeout(tvHideTimeout); });
+tvPopup.addEventListener("mouseleave", tvScheduleHide);
+
+// Attach hover handlers to any element with class "tv-ticker" and data-symbol attribute.
+// Called after rendering research or review content.
+function attachTvHovers(root) {
+  root.querySelectorAll(".tv-ticker[data-symbol]").forEach((el) => {
+    el.addEventListener("mouseenter", () => tvShow(el, el.dataset.symbol));
+    el.addEventListener("mouseleave", tvScheduleHide);
+  });
+}
+
 // ---------------- tab switching ----------------
 document.querySelectorAll(".tab").forEach((b) => {
   b.addEventListener("click", () => {
@@ -667,20 +784,25 @@ async function research(ticker) {
   setStatus("snapshot-body", "Loading…");
   setStatus("chart-status", "Loading…");
   setStatus("history-body", "Loading…");
+  setStatus("news-body", "Loading…");
+  setStatus("splits-body", "Loading…");
   setStatus("offerings-body", "Loading…");
   setStatus("ownership-body", "Loading…");
   setStatus("filings-body", "Loading…");
 
-  const [hist, restricted, owners, splits, offerings, filings] = await Promise.allSettled([
+  const [hist, restricted, owners, splits, offerings, filings, news] = await Promise.allSettled([
     fetchHistoricalFloat(ticker),
     fetchRestrictedShares(ticker),
     fetchOwnership(ticker),
     fetchReverseSplits(ticker),
     fetchOfferings(ticker),
     fetchFilings(ticker),
+    fetchNews(ticker),
   ]);
 
   renderResearchHistory(ticker, hist, restricted);
+  renderNews(ticker, news);
+  renderReverseSplits(ticker, splits);
   renderOfferings(ticker, offerings);
   renderOwnership(ticker, owners, splits);
   renderFilings(ticker, filings);
@@ -712,6 +834,13 @@ async function fetchOfferings(ticker) {
 
 async function fetchReverseSplits(ticker) {
   const r = await fetch(`/api/reverse-splits?ticker=${encodeURIComponent(ticker)}&limit=20&page=1`);
+  const j = await r.json();
+  if (!r.ok || j.status === "error") throw new Error(j?.error?.message || `HTTP ${r.status}`);
+  return j;
+}
+
+async function fetchNews(ticker) {
+  const r = await fetch(`/api/news-basic?ticker=${encodeURIComponent(ticker)}&limit=20&page=1`);
   const j = await r.json();
   if (!r.ok || j.status === "error") throw new Error(j?.error?.message || `HTTP ${r.status}`);
   return j;
@@ -779,7 +908,7 @@ function renderSnapshot(r) {
   const tradBad = tradVal != null && tradVal < 0;
 
   const cards = [
-    { label: "Ticker", value: `${escapeHtml(r.ticker || "")} ${dilutionLinks(r.ticker)}`, sub: r.cik ? `CIK ${escapeHtml(r.cik)}` : (r.classes_details ? escapeHtml(r.classes_details) : "") },
+    { label: "Ticker", value: `<span class="tv-ticker" data-symbol="${escapeHtml(r.ticker || "")}" style="cursor:pointer;">${escapeHtml(r.ticker || "")}</span> ${dilutionLinks(r.ticker)}`, sub: r.cik ? `CIK ${escapeHtml(r.cik)}` : (r.classes_details ? escapeHtml(r.classes_details) : "") },
     { label: "Outstanding", value: fmtInt(r.outstanding_shares) },
     { label: "Float", value: fmtInt(r.float), valueCls: floatBad ? " bad" : "", sub: floatBad ? "NEGATIVE" : `Tradable: ${fmtInt(r.tradable_float)}` },
     { label: "Tradable Float", value: fmtInt(r.tradable_float), valueCls: tradBad ? " bad" : "", sub: tradBad ? "NEGATIVE" : "" },
@@ -820,6 +949,7 @@ function renderSnapshot(r) {
       `).join("")}
     </div>
   `;
+  attachTvHovers(document.getElementById("snapshot-body"));
 }
 
 // Compute "big change" flags by comparing each row to its older neighbor.
@@ -1098,6 +1228,185 @@ function renderOwnership(ticker, res, splitsRes) {
   document.getElementById("ownership-body").innerHTML = html;
 }
 
+let lastNewsResults = [];
+
+function renderNews(ticker, res) {
+  if (res.status === "rejected") return setError("news-body", `Failed to load: ${res.reason.message}`);
+  const items = (res.value.results || []).slice(0, 20);
+  lastNewsResults = items;
+  if (!items.length) {
+    document.getElementById("news-body").innerHTML = `<div class="status">No recent news.</div>`;
+    return;
+  }
+  const html = `
+    <table>
+      <thead><tr>
+        <th>Filed</th>
+        <th>Form</th>
+        <th>Headline</th>
+        <th>Filing</th>
+      </tr></thead>
+      <tbody>
+        ${items.map((n, i) => {
+          const snip = (n.summary || "").replace(/\s+/g, " ").trim().slice(0, 200);
+          return `
+          <tr class="news-row" data-news-idx="${i}">
+            <td>${fmtDate(n.filed_at)}<div class="sub" style="color:var(--muted);font-size:11px;">${n.filed_at_time ? new Date(n.filed_at_time).toLocaleTimeString() : ""}</div></td>
+            <td><span class="form-pill">${escapeHtml(n.form_type || "—")}</span></td>
+            <td>
+              <strong>${escapeHtml(n.title || "—")}</strong>
+              ${snip ? `<div class="news-summary-snippet">${escapeHtml(snip)}${n.summary && n.summary.length > 200 ? "…" : ""}</div>` : ""}
+            </td>
+            <td>${n.url ? `<a href="${escapeHtml(n.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Open</a>` : "—"}</td>
+          </tr>
+        `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+  const body = document.getElementById("news-body");
+  body.innerHTML = html;
+  body.querySelectorAll(".news-row").forEach((tr) => {
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest("a, button")) return;
+      openNewsPanel(Number(tr.dataset.newsIdx));
+    });
+  });
+}
+
+function renderReverseSplits(ticker, res) {
+  if (res.status === "rejected") return setError("splits-body", `Failed to load: ${res.reason.message}`);
+  const splits = res.value.results || [];
+  if (!splits.length) {
+    document.getElementById("splits-body").innerHTML = `<div class="status">No reverse splits on record.</div>`;
+    return;
+  }
+  const html = `
+    <table>
+      <thead><tr>
+        <th>Execution Date</th>
+        <th>Split From</th>
+        <th>Split To</th>
+        <th>Ratio</th>
+      </tr></thead>
+      <tbody>
+        ${splits.map((s) => {
+          const from = num(s.split_from);
+          const to = num(s.split_to);
+          const ratio = from && to ? `${from}:${to}` : "—";
+          return `
+          <tr>
+            <td>${fmtDate(s.execution_date)}</td>
+            <td class="num">${from != null ? from.toLocaleString() : "—"}</td>
+            <td class="num">${to != null ? to.toLocaleString() : "—"}</td>
+            <td>${ratio}</td>
+          </tr>
+        `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+  document.getElementById("splits-body").innerHTML = html;
+}
+
+// ---------------- news summary panel ----------------
+let newsPanelIdx = -1;
+
+function openNewsPanel(idx) {
+  if (idx < 0 || idx >= lastNewsResults.length) return;
+  newsPanelIdx = idx;
+  const n = lastNewsResults[idx];
+  const panel = document.getElementById("news-panel");
+  panel.classList.add("open");
+  panel.setAttribute("aria-hidden", "false");
+
+  document.getElementById("news-panel-title").innerHTML =
+    `Summary — <strong>${escapeHtml(n.ticker || "")}</strong> ${escapeHtml(n.form_type || "")}`;
+  const filedLine = n.filed_at_time
+    ? new Date(n.filed_at_time).toLocaleString()
+    : fmtDate(n.filed_at);
+  document.getElementById("news-panel-subtitle").textContent = `Filed at: ${filedLine}`;
+
+  const summaryHtml = renderSummary(n.summary || "");
+  const fields = [
+    ["Title", escapeHtml(n.title || "—")],
+    ["Form Type", `<span class="form-pill">${escapeHtml(n.form_type || "—")}</span>`],
+    ["Filed at", filedLine],
+    ["Author", escapeHtml(n.author || "—")],
+    ["File no.", escapeHtml(n.file_no || "—")],
+    ["Link", n.url ? `<a href="${escapeHtml(n.url)}" target="_blank" rel="noopener">Open on AskEdgar</a>` : "—"],
+  ];
+
+  document.getElementById("news-panel-content").innerHTML = `
+    <div class="panel-section">
+      <h4>Form ${escapeHtml(n.form_type || "")}:</h4>
+      <div class="panel-longtext">${summaryHtml || "<em>No summary available.</em>"}</div>
+    </div>
+    <div class="panel-section">
+      <h4>Metadata</h4>
+      <div class="panel-fields">
+        ${fields.map(([l, v]) => `<div class="label">${l}</div><div class="value">${v}</div>`).join("")}
+      </div>
+    </div>
+  `;
+
+  document.getElementById("news-position").textContent = `${idx + 1} / ${lastNewsResults.length}`;
+  document.getElementById("news-prev").disabled = idx <= 0;
+  document.getElementById("news-next").disabled = idx >= lastNewsResults.length - 1;
+}
+
+function closeNewsPanel() {
+  const panel = document.getElementById("news-panel");
+  panel.classList.remove("open");
+  panel.setAttribute("aria-hidden", "true");
+  newsPanelIdx = -1;
+}
+
+function newsNavigate(delta) {
+  if (newsPanelIdx < 0) return;
+  const next = newsPanelIdx + delta;
+  if (next < 0 || next >= lastNewsResults.length) return;
+  openNewsPanel(next);
+}
+
+// Render AskEdgar summary text into mild HTML (bold, bullets, numbered headers).
+function renderSummary(text) {
+  if (!text) return "";
+  const inline = (s) => escapeHtml(s).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  const lines = text.split(/\r?\n/);
+  const out = [];
+  let inList = false;
+  const flush = () => { if (inList) { out.push("</ul>"); inList = false; } };
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) { flush(); out.push(""); continue; }
+    if (/^[-•*]\s+/.test(line)) {
+      if (!inList) { out.push("<ul>"); inList = true; }
+      out.push(`<li>${inline(line.replace(/^[-•*]\s+/, ""))}</li>`);
+      continue;
+    }
+    flush();
+    const boldOnly = line.match(/^\*\*(.+)\*\*\s*$/);
+    if (boldOnly) {
+      out.push(`<div><strong>${escapeHtml(boldOnly[1])}</strong></div>`);
+      continue;
+    }
+    if (/^\d+[.)]\s+/.test(line) || /^[A-Z][A-Z0-9 ]+:/.test(line)) {
+      out.push(`<div><strong>${inline(line)}</strong></div>`);
+    } else {
+      out.push(`<div>${inline(line)}</div>`);
+    }
+  }
+  flush();
+  return out.join("");
+}
+
+document.getElementById("news-prev").addEventListener("click", () => newsNavigate(-1));
+document.getElementById("news-next").addEventListener("click", () => newsNavigate(1));
+document.querySelectorAll("[data-news-close]").forEach((el) => {
+  el.addEventListener("click", closeNewsPanel);
+});
+
 function renderOfferings(ticker, res) {
   if (res.status === "rejected") return setError("offerings-body", `Failed to load: ${res.reason.message}`);
   const offerings = (res.value.results || []).slice(0, 5);
@@ -1183,6 +1492,10 @@ let reviewLoadedOnce = false;
 let reviewRowsByUrl = new Map();   // document_url -> row (server values)
 let dirtyByUrl = new Map();        // document_url -> { field: newValue }
 let staleUrls = new Set();         // pinned rows that didn't match the SQL filter
+
+// Column sorting state (default: tradable_float_final ascending = lowest first)
+let reviewSortCol = "tradable_float_final";
+let reviewSortAsc = true;
 
 function getPinnedUrls() {
   try { return new Set(JSON.parse(localStorage.getItem(PIN_KEY) || "[]")); }
@@ -1340,39 +1653,71 @@ async function loadReviewByTicker() {
   renderReviewTable(main.results);
 }
 
+function sortReviewRows(rows) {
+  const col = reviewSortCol;
+  const asc = reviewSortAsc;
+  const isText = col === "ticker";
+  return [...rows].sort((a, b) => {
+    let va, vb;
+    if (isText) {
+      va = (a[col] || "").toLowerCase();
+      vb = (b[col] || "").toLowerCase();
+      if (va < vb) return asc ? -1 : 1;
+      if (va > vb) return asc ? 1 : -1;
+      return 0;
+    }
+    va = num(a[col]); vb = num(b[col]);
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;   // nulls last
+    if (vb == null) return -1;
+    return asc ? va - vb : vb - va;
+  });
+}
+
+function sortHeader(label, col) {
+  const active = reviewSortCol === col;
+  const arrow = active ? (reviewSortAsc ? "▲" : "▼") : "▲";
+  return `<th class="num sortable${active ? " sort-active" : ""}" data-sort-col="${col}">${label}<span class="sort-arrow">${arrow}</span></th>`;
+}
+
 function renderReviewTable(rows) {
   if (!rows.length) {
     const msg = reviewMode === "ticker" ? "No records for this ticker." : "No records for this date.";
     document.getElementById("review-body").innerHTML = `<div class="status">${msg}</div>`;
     return;
   }
+  const sorted = sortReviewRows(rows);
+  // Rebuild reviewRowsByUrl in sorted order so detail-panel prev/next matches
+  reviewRowsByUrl = new Map(sorted.map((r) => [r.document_url, r]));
+
+  const tickerActive = reviewSortCol === "ticker";
+  const tickerArrow = tickerActive ? (reviewSortAsc ? "▲" : "▼") : "▲";
   const html = `
     <div class="review-table-wrap scroll-x">
       <table class="review-table">
         <thead><tr>
-          <th>Ticker / Form</th>
+          <th class="sortable${tickerActive ? " sort-active" : ""}" data-sort-col="ticker">Ticker / Form<span class="sort-arrow">${tickerArrow}</span></th>
           <th>Reported</th>
           <th>Filed</th>
+          <th>Category</th>
           <th class="num">OS (raw)</th>
           <th class="num">OS Reported</th>
-          <th class="num">OS Final</th>
+          ${sortHeader("OS Final", "outstanding_shares_final")}
           <th class="num">Float (raw)</th>
-          <th class="num">Float Final</th>
+          ${sortHeader("Float Final", "float_final")}
           <th class="num">Tradable (raw)</th>
-          <th class="num">Tradable Final</th>
+          ${sortHeader("Tradable Final", "tradable_float_final")}
           <th class="num">Restricted</th>
           <th class="num">Affiliate</th>
           <th class="num">ADS Ratio</th>
-          <th>ADR</th>
           <th>Foreign / Classes</th>
-          <th>Category</th>
           <th>Details / Prompt</th>
           <th>Source / Filing</th>
           <th>Notes</th>
           <th>Actions</th>
         </tr></thead>
         <tbody>
-          ${rows.map((r) => renderReviewRow(r)).join("")}
+          ${sorted.map((r) => renderReviewRow(r)).join("")}
         </tbody>
       </table>
     </div>
@@ -1385,8 +1730,10 @@ function renderReviewRow(r) {
   const url = r.document_url;
   const stale = staleUrls.has(url);
   const pinned = getPinnedUrls().has(url);
-  const floatBad = num(r.float_final) != null && num(r.float_final) < 0;
-  const tradBad = num(r.tradable_float_final) != null && num(r.tradable_float_final) < 0;
+  const LOW = 300000;
+  const osBad   = num(r.outstanding_shares_final) != null && num(r.outstanding_shares_final) < LOW;
+  const floatBad = num(r.float_final) != null && num(r.float_final) < LOW;
+  const tradBad  = num(r.tradable_float_final) != null && num(r.tradable_float_final) < LOW;
   const adsAttr = r.is_adr === true ? "true" : r.is_adr === false ? "false" : "";
 
   const numInput = (col, val) => {
@@ -1397,17 +1744,19 @@ function renderReviewRow(r) {
   return `
     <tr class="${stale ? "stale-row " : ""}${pinned ? "pinned" : ""}" data-url="${escapeHtml(url)}">
       <td class="row-key">
-        <strong>${escapeHtml(r.ticker || "")}</strong>
+        <strong class="tv-ticker" data-symbol="${escapeHtml(r.ticker || "")}" style="cursor:pointer;">${escapeHtml(r.ticker || "")}</strong>
         ${dilutionLinks(r.ticker)}
         ${pinned ? `<span class="badge pin" data-unpin="${escapeHtml(url)}" title="Click to unpin">pinned ✕</span>` : ""}
         ${stale ? `<span class="badge ins">stale</span>` : ""}
         <div style="margin-top:4px;"><span class="form-pill">${escapeHtml(r.form_type || "—")}</span></div>
+        ${r.is_adr === true ? `<div style="margin-top:2px;"><span class="badge ins">ADR</span></div>` : ""}
       </td>
       <td>${fmtDate(r.date_final)}</td>
       <td>${fmtDate(r.filed_at)}</td>
+      <td class="note">${escapeHtml(r.category || "")}</td>
       <td>${numInput("outstanding_shares", r.outstanding_shares)}</td>
       <td>${numInput("outstanding_shares_reported", r.outstanding_shares_reported)}</td>
-      <td class="num">${fmtInt(r.outstanding_shares_final)}</td>
+      <td class="num ${osBad ? "bad" : ""}">${fmtInt(r.outstanding_shares_final)}</td>
       <td>${numInput("float", r.float)}</td>
       <td class="num ${floatBad ? "bad" : ""}">${fmtInt(r.float_final)}</td>
       <td>${numInput("tradable_float", r.tradable_float)}</td>
@@ -1415,18 +1764,10 @@ function renderReviewRow(r) {
       <td>${numInput("restricted_shares", r.restricted_shares)}</td>
       <td>${numInput("affiliate_shares", r.affiliate_shares)}</td>
       <td>${numInput("ads_ratio", r.ads_ratio)}</td>
-      <td>
-        <select class="editable" data-url="${escapeHtml(url)}" data-field="is_adr">
-          <option value="" ${adsAttr === "" ? "selected" : ""}>—</option>
-          <option value="true" ${adsAttr === "true" ? "selected" : ""}>Yes</option>
-          <option value="false" ${adsAttr === "false" ? "selected" : ""}>No</option>
-        </select>
-      </td>
       <td class="note">
         ${r.foreign_company ? "Foreign · " : ""}${r.number_classes && Number(r.number_classes) > 1 ? `${escapeHtml(r.number_classes)} classes` : ""}
         ${r.classes_details ? `<div>${escapeHtml(r.classes_details)}</div>` : ""}
       </td>
-      <td class="note">${escapeHtml(r.category || "")}</td>
       <td class="note">
         ${r.details ? `<details class="detail-cell"><summary>Details</summary><div class="body">${escapeHtml(r.details)}</div></details>` : ""}
         ${r.prompt ? `<details class="detail-cell"><summary>Prompt</summary><div class="body">${escapeHtml(r.prompt)}</div></details>` : ""}
@@ -1475,6 +1816,21 @@ function attachReviewHandlers() {
       openReviewPanel(tr.dataset.url);
     });
   });
+  // Sortable column headers
+  document.querySelectorAll("#review-body th.sortable[data-sort-col]").forEach((th) => {
+    th.addEventListener("click", () => {
+      const col = th.dataset.sortCol;
+      if (reviewSortCol === col) {
+        reviewSortAsc = !reviewSortAsc;
+      } else {
+        reviewSortCol = col;
+        reviewSortAsc = true;
+      }
+      renderReviewTable([...reviewRowsByUrl.values()]);
+    });
+  });
+  // TradingView hover on ticker names
+  attachTvHovers(document.getElementById("review-body"));
 }
 
 function originalValueFor(url, field) {
@@ -1657,8 +2013,10 @@ function closeReviewPanel() {
 
 function renderReviewPanel(r) {
   const url = r.document_url;
-  const floatBad = num(r.float_final) != null && num(r.float_final) < 0;
-  const tradBad  = num(r.tradable_float_final) != null && num(r.tradable_float_final) < 0;
+  const LOW = 300000;
+  const osBad   = num(r.outstanding_shares_final) != null && num(r.outstanding_shares_final) < LOW;
+  const floatBad = num(r.float_final) != null && num(r.float_final) < LOW;
+  const tradBad  = num(r.tradable_float_final) != null && num(r.tradable_float_final) < LOW;
   const adsAttr = r.is_adr === true ? "true" : r.is_adr === false ? "false" : "";
 
   document.getElementById("panel-title").innerHTML =
@@ -1690,6 +2048,8 @@ function renderReviewPanel(r) {
         <div class="value">${fmtDate(r.date_final)}</div>
         <div class="label">Category</div>
         <div class="value" style="white-space:pre-wrap;">${escapeHtml(r.category || "—")}</div>
+        ${r.details ? `<div class="label">Details</div><div class="value" style="white-space:pre-wrap;">${escapeHtml(r.details)}</div>` : ""}
+        ${r.prompt ? `<div class="label">Prompt</div><div class="value" style="white-space:pre-wrap;">${escapeHtml(r.prompt)}</div>` : ""}
         <div class="label">Flags</div>
         <div class="value">${flags.length ? flags.map(f => `<span class="badge ins">${f}</span>`).join(" ") : "—"}</div>
         ${r.classes_details ? `<div class="label">Classes</div><div class="value">${escapeHtml(r.classes_details)}</div>` : ""}
@@ -1704,11 +2064,11 @@ function renderReviewPanel(r) {
       <h4>Computed (read-only)</h4>
       <div class="panel-fields">
         <div class="label">OS Final</div>
-        <div class="value">${fmtInt(r.outstanding_shares_final)}</div>
+        <div class="value ${osBad ? "bad" : ""}">${fmtInt(r.outstanding_shares_final)}${osBad ? " · LOW" : ""}</div>
         <div class="label">Float Final</div>
-        <div class="value ${floatBad ? "bad" : ""}">${fmtInt(r.float_final)}${floatBad ? " · NEGATIVE" : ""}</div>
+        <div class="value ${floatBad ? "bad" : ""}">${fmtInt(r.float_final)}${floatBad ? " · LOW" : ""}</div>
         <div class="label">Tradable Final</div>
-        <div class="value ${tradBad ? "bad" : ""}">${fmtInt(r.tradable_float_final)}${tradBad ? " · NEGATIVE" : ""}</div>
+        <div class="value ${tradBad ? "bad" : ""}">${fmtInt(r.tradable_float_final)}${tradBad ? " · LOW" : ""}</div>
       </div>
     </div>
 
@@ -1744,8 +2104,6 @@ function renderReviewPanel(r) {
       </div>
     </div>
 
-    ${r.details ? `<div class="panel-section"><h4>Details</h4><div class="panel-longtext">${escapeHtml(r.details)}</div></div>` : ""}
-    ${r.prompt ? `<div class="panel-section"><h4>Prompt</h4><div class="panel-longtext">${escapeHtml(r.prompt)}</div></div>` : ""}
   `;
 
   const content = document.getElementById("panel-content");

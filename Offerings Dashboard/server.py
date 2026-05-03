@@ -68,12 +68,14 @@ EDITABLE_COLUMNS = {
     "potential_owners": "text",
     "bank": "text",
     "form_type": "text",
+    "period_ending": "date",
 }
 
 REVIEW_COLUMNS = """
     id,
     ticker,
     filed_at,
+    period_ending,
     headline,
     selling_shareholder_details,
     commentary,
@@ -123,7 +125,7 @@ def _build_review_by_ticker_query(done_filter):
     done_sql = DONE_CLAUSES.get(done_filter, "")
     return f"""
         SELECT {REVIEW_COLUMNS}
-        FROM offering_data_new_final_clone
+        FROM all_financings_final
         WHERE ticker = %(ticker)s
         {done_sql}
         ORDER BY filed_at DESC NULLS LAST, id DESC
@@ -157,6 +159,14 @@ WARRANTS_EDITABLE_COLUMNS = {
     "convertible_date": "date",
     "owners": "text",
     "bank": "text",
+    "registered": "text",
+    "summary": "text",
+    "notes": "text",
+    "warrants_remaining": "numeric",
+    "convertible_debt_remaining": "numeric",
+    "file_no": "text",
+    "document_url": "text",
+    "filed_at": "date",
 }
 
 WARRANTS_REVIEW_COLUMNS = """
@@ -167,22 +177,28 @@ WARRANTS_REVIEW_COLUMNS = """
     details,
     selling_shareholder_details,
     owners_two,
+    registered,
+    summary,
     verified,
     askedgar_url,
     pp_clause,
     price_protection,
     warrants_amount,
     warrants_exercise_price,
+    warrants_remaining,
     expiration_date,
     exercisable_date,
     prefunded_cost,
     offering_amount,
     conversion_price,
+    convertible_debt_remaining,
     maturity_date,
     convertible_date,
     owners,
     bank,
     document_url,
+    file_no,
+    notes,
     updated_at
 """
 
@@ -208,7 +224,7 @@ def _build_warrants_by_ticker_query(verified_filter):
     v_sql = VERIFIED_CLAUSES.get(verified_filter, "")
     return f"""
         SELECT {WARRANTS_REVIEW_COLUMNS}
-        FROM warrants_convertibles4
+        FROM warrants_convertibles3
         WHERE ticker = %(ticker)s
         {v_sql}
         ORDER BY filed_at DESC NULLS LAST, id DESC
@@ -248,10 +264,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._handle_review_by_ids()
             elif url.path == "/api/review/update":
                 self._handle_review_update()
+            elif url.path == "/api/review/create":
+                self._handle_review_create()
             elif url.path == "/api/warrants/by-ids":
                 self._handle_warrants_by_ids()
             elif url.path == "/api/warrants/update":
                 self._handle_warrants_update()
+            elif url.path == "/api/warrants/create":
+                self._handle_warrants_create()
             else:
                 self.send_error(404, "Not Found")
         except Exception as e:
@@ -358,9 +378,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             rows = cur.fetchall()
         self._send_json(200, {"status": "success", "count": len(rows), "results": rows})
 
+    @staticmethod
+    def _offerings_table(mode):
+        return "all_financings_final" if mode == "ticker" else "offering_data_new_final_clone"
+
+    @staticmethod
+    def _warrants_table(mode):
+        return "warrants_convertibles3" if mode == "ticker" else "warrants_convertibles4"
+
     def _handle_review_update(self):
         body = self._read_json_body()
         row_id = body.get("id")
+        mode = body.get("mode", "date")
         updates = body.get("updates") or {}
         if row_id is None or row_id == "":
             self._send_json(400, {"status": "error", "error": {"code": "missing_pk", "message": "id required"}})
@@ -374,6 +403,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json(400, {"status": "error", "error": {"code": "no_updates", "message": "updates required"}})
             return
 
+        table = self._offerings_table(mode)
         sets = []
         values = []
         for col, raw in updates.items():
@@ -386,7 +416,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             values.append(value)
         sets.append("updated_at = NOW()")
         sql = (
-            f"UPDATE offering_data_new_final_clone SET {', '.join(sets)} "
+            f"UPDATE {table} SET {', '.join(sets)} "
             f"WHERE id = %s RETURNING {REVIEW_COLUMNS}"
         )
         values.append(row_id)
@@ -398,6 +428,36 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not row:
             self._send_json(404, {"status": "error", "error": {"code": "not_found", "message": "row not found"}})
             return
+        self._send_json(200, {"status": "success", "result": row})
+
+    def _handle_review_create(self):
+        body = self._read_json_body()
+        mode = body.get("mode", "date")
+        table = self._offerings_table(mode)
+        cols = []
+        vals = []
+        for col in ("ticker", "filed_at"):
+            v = body.get(col)
+            if v is not None and v != "":
+                cols.append(col)
+                if col == "filed_at":
+                    vals.append(datetime.date.fromisoformat(str(v)[:10]))
+                else:
+                    vals.append(str(v))
+        if cols:
+            placeholders = ", ".join(["%s"] * len(cols))
+            col_list = ", ".join(cols)
+            sql = (
+                f"INSERT INTO {table} ({col_list}) "
+                f"VALUES ({placeholders}) RETURNING {REVIEW_COLUMNS}"
+            )
+        else:
+            sql = f"INSERT INTO {table} DEFAULT VALUES RETURNING {REVIEW_COLUMNS}"
+            vals = []
+        with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, vals)
+            row = cur.fetchone()
+            conn.commit()
         self._send_json(200, {"status": "success", "result": row})
 
     # ----------------- Warrants & Convertibles handlers -----------------
@@ -473,6 +533,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _handle_warrants_update(self):
         body = self._read_json_body()
         row_id = body.get("id")
+        mode = body.get("mode", "date")
         updates = body.get("updates") or {}
         if row_id is None or row_id == "":
             self._send_json(400, {"status": "error", "error": {"code": "missing_pk", "message": "id required"}})
@@ -486,6 +547,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json(400, {"status": "error", "error": {"code": "no_updates", "message": "updates required"}})
             return
 
+        table = self._warrants_table(mode)
         sets = []
         values = []
         for col, raw in updates.items():
@@ -498,7 +560,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             values.append(value)
         sets.append("updated_at = NOW()")
         sql = (
-            f"UPDATE warrants_convertibles4 SET {', '.join(sets)} "
+            f"UPDATE {table} SET {', '.join(sets)} "
             f"WHERE id = %s RETURNING {WARRANTS_REVIEW_COLUMNS}"
         )
         values.append(row_id)
@@ -510,6 +572,36 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not row:
             self._send_json(404, {"status": "error", "error": {"code": "not_found", "message": "row not found"}})
             return
+        self._send_json(200, {"status": "success", "result": row})
+
+    def _handle_warrants_create(self):
+        body = self._read_json_body()
+        mode = body.get("mode", "date")
+        table = self._warrants_table(mode)
+        cols = []
+        vals = []
+        for col in ("ticker", "filed_at"):
+            v = body.get(col)
+            if v is not None and v != "":
+                cols.append(col)
+                if col == "filed_at":
+                    vals.append(datetime.date.fromisoformat(str(v)[:10]))
+                else:
+                    vals.append(str(v))
+        if cols:
+            placeholders = ", ".join(["%s"] * len(cols))
+            col_list = ", ".join(cols)
+            sql = (
+                f"INSERT INTO {table} ({col_list}) "
+                f"VALUES ({placeholders}) RETURNING {WARRANTS_REVIEW_COLUMNS}"
+            )
+        else:
+            sql = f"INSERT INTO {table} DEFAULT VALUES RETURNING {WARRANTS_REVIEW_COLUMNS}"
+            vals = []
+        with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, vals)
+            row = cur.fetchone()
+            conn.commit()
         self._send_json(200, {"status": "success", "result": row})
 
     @staticmethod

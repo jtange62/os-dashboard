@@ -91,7 +91,7 @@
   button.secondary:hover { border-color: var(--accent); color: var(--accent); }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
 
-  main { max-width: 1680px; margin: 0 auto; padding: 20px 24px 60px; }
+  main { max-width: 2400px; margin: 0 auto; padding: 20px 24px 60px; }
   .panel-grid { display: grid; gap: 18px; }
   section {
     background: var(--panel);
@@ -557,6 +557,7 @@
       <button type="submit" class="primary" id="review-refresh">Refresh</button>
       <button type="button" class="secondary" id="review-today">Today</button>
       <button type="button" class="secondary" id="review-yesterday">Yesterday (CDT)</button>
+      <button type="button" class="secondary" id="new-record-btn" style="margin-left:12px;">+ New Record</button>
       <span id="review-summary" class="status" style="margin-left:auto;"></span>
     </form>
 
@@ -566,6 +567,7 @@
       </label>
       <button type="submit" class="primary">Load history</button>
       <button type="button" class="secondary" id="review-back-to-daily">← Back to daily queue</button>
+      <button type="button" class="secondary" id="new-record-btn-ticker" style="margin-left:12px;">+ New Record</button>
       <span id="review-summary-ticker" class="status" style="margin-left:auto;"></span>
     </form>
 
@@ -1031,8 +1033,7 @@ function renderNews(ticker, res) {
       <thead><tr>
         <th>Filed</th>
         <th>Form</th>
-        <th>Title / Summary</th>
-        <th>Author</th>
+        <th>Headline</th>
         <th>Filing</th>
       </tr></thead>
       <tbody>
@@ -1046,7 +1047,6 @@ function renderNews(ticker, res) {
               <strong>${escapeHtml(n.title || "—")}</strong>
               ${snip ? `<div class="news-summary-snippet">${escapeHtml(snip)}${n.summary && n.summary.length > 200 ? "…" : ""}</div>` : ""}
             </td>
-            <td class="note">${escapeHtml(n.author || "")}</td>
             <td>${n.url ? `<a href="${escapeHtml(n.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Open</a>` : "—"}</td>
           </tr>
         `;
@@ -1177,6 +1177,7 @@ const OFFERINGS_QUEUE = {
   api: "/api/review",
   byIds: "/api/review/by-ids",
   update: "/api/review/update",
+  create: "/api/review/create",
   pinKey: "offerings-dashboard-pinned-ids",
   statusField: "done",
   statusLabel: "Done",
@@ -1186,7 +1187,7 @@ const OFFERINGS_QUEUE = {
   numeric: ["offering_amount", "share_price", "conversion_price", "shares_amount", "warrants_amount", "warrants_exercise_price"],
   boolean: ["done"],
   text: ["ticker", "headline", "selling_shareholder_details", "commentary", "disclosure_type", "askedgar_url", "potential_owners", "bank", "form_type"],
-  date: [],
+  date: ["period_ending"],
   rows: new Map(),
   dirty: new Map(),
   stale: new Set(),
@@ -1201,16 +1202,17 @@ const WARRANTS_QUEUE = {
   api: "/api/warrants",
   byIds: "/api/warrants/by-ids",
   update: "/api/warrants/update",
+  create: "/api/warrants/create",
   pinKey: "offerings-dashboard-pinned-warrants",
   statusField: "verified",
   statusLabel: "Verified",
   statusUrlParam: "rverified",
   serverParam: "verified",
   defaultStatus: "true",
-  numeric: ["warrants_amount", "warrants_exercise_price", "prefunded_cost", "offering_amount", "conversion_price"],
+  numeric: ["warrants_amount", "warrants_exercise_price", "warrants_remaining", "prefunded_cost", "offering_amount", "conversion_price", "convertible_debt_remaining"],
   boolean: ["verified"],
-  text: ["ticker", "form_type", "details", "selling_shareholder_details", "owners_two", "askedgar_url", "pp_clause", "price_protection", "owners", "bank"],
-  date: ["expiration_date", "exercisable_date", "maturity_date", "convertible_date"],
+  text: ["ticker", "form_type", "details", "selling_shareholder_details", "owners_two", "registered", "summary", "notes", "askedgar_url", "pp_clause", "price_protection", "owners", "bank", "document_url", "file_no"],
+  date: ["filed_at", "expiration_date", "exercisable_date", "maturity_date", "convertible_date"],
   rows: new Map(),
   dirty: new Map(),
   stale: new Set(),
@@ -1342,6 +1344,49 @@ document.getElementById("review-status-filter").addEventListener("change", () =>
   syncStatusFilterToUrl();
   if (reviewMode === "date" || document.getElementById("review-ticker").value) loadReview();
 });
+
+async function createNewRecord() {
+  const q = activeQueue();
+  const seed = { mode: reviewMode };
+  // Pre-fill ticker in ticker mode
+  if (reviewMode === "ticker") {
+    const t = document.getElementById("review-ticker").value.trim().toUpperCase();
+    if (t) seed.ticker = t;
+  }
+  // Pre-fill filed_at with the date picker value in date mode
+  if (reviewMode === "date") {
+    const d = document.getElementById("review-date").value;
+    if (d) seed.filed_at = d;
+  }
+  try {
+    const res = await fetch(q.create, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(seed),
+    });
+    const j = await res.json();
+    if (!res.ok || j.status !== "success") throw new Error(j?.error?.message || `HTTP ${res.status}`);
+    toast(`Created new ${q.label} record #${j.result.id}`);
+    // Inject the new row into the current view
+    q.rows.set(Number(j.result.id), j.result);
+    const tbody = document.querySelector("#review-body tbody");
+    if (tbody) {
+      tbody.insertAdjacentHTML("afterbegin", q.renderRow(j.result));
+      attachReviewHandlers();
+    } else {
+      // No table yet — render one
+      renderReviewTable(q, [j.result]);
+    }
+    pinId(q, j.result.id);
+    // Open the detail panel so the user can fill in fields
+    openReviewPanel(q, Number(j.result.id));
+  } catch (e) {
+    toast(`Failed to create record: ${e.message}`, "error");
+  }
+}
+
+document.getElementById("new-record-btn").addEventListener("click", createNewRecord);
+document.getElementById("new-record-btn-ticker").addEventListener("click", createNewRecord);
 
 async function loadReview() {
   reviewLoadedOnce = true;
@@ -1551,7 +1596,7 @@ async function saveRow(q, id) {
   const updates = q.dirty.get(Number(id));
   if (!updates) return;
 
-  const payload = { id: Number(id), updates: {} };
+  const payload = { id: Number(id), mode: reviewMode, updates: {} };
   for (const [k, v] of Object.entries(updates)) {
     const t = fieldType(q, k);
     if (t === "boolean") {
@@ -1716,9 +1761,12 @@ OFFERINGS_QUEUE.renderTableHead = () => `
   <tr>
     <th>Ticker / Form</th>
     <th>Filed</th>
+    <th>Period Ending</th>
     <th>Done</th>
     <th>Disclosure Type</th>
     <th>Headline</th>
+    <th>Selling Shareholder</th>
+    <th>Commentary</th>
     <th class="num">Offering $</th>
     <th class="num">Share $</th>
     <th class="num">Conv $</th>
@@ -1727,8 +1775,6 @@ OFFERINGS_QUEUE.renderTableHead = () => `
     <th class="num">Warr. Exercise $</th>
     <th>Bank</th>
     <th>Potential Owners</th>
-    <th>Selling Shareholder</th>
-    <th>Commentary</th>
     <th>Filing</th>
     <th>Actions</th>
   </tr>`;
@@ -1749,9 +1795,12 @@ OFFERINGS_QUEUE.renderRow = function (r) {
         <div style="margin-top:4px;">${fieldText(q, id, "form_type", r.form_type, "text-short")}</div>
       </td>
       <td>${fmtDate(r.filed_at)}</td>
+      <td>${fieldDate(q, id, "period_ending", r.period_ending)}</td>
       <td>${booleanSelect(q, id, "done", doneAttr)}</td>
       <td>${fieldText(q, id, "disclosure_type", r.disclosure_type, "text-short")}</td>
       <td>${fieldText(q, id, "headline", r.headline, "text-mid")}</td>
+      <td>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details, "text-long")}</td>
+      <td>${fieldTextarea(q, id, "commentary", r.commentary, "text-long")}</td>
       <td>${fieldNum(q, id, "offering_amount", r.offering_amount)}</td>
       <td>${fieldNum(q, id, "share_price", r.share_price)}</td>
       <td>${fieldNum(q, id, "conversion_price", r.conversion_price)}</td>
@@ -1760,8 +1809,6 @@ OFFERINGS_QUEUE.renderRow = function (r) {
       <td>${fieldNum(q, id, "warrants_exercise_price", r.warrants_exercise_price)}</td>
       <td>${fieldText(q, id, "bank", r.bank, "text-short")}</td>
       <td>${fieldText(q, id, "potential_owners", r.potential_owners, "text-mid")}</td>
-      <td>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details, "text-long")}</td>
-      <td>${fieldTextarea(q, id, "commentary", r.commentary, "text-long")}</td>
       <td>${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open</a>` : "—"}</td>
       <td>
         <div class="row-actions">
@@ -1787,6 +1834,8 @@ OFFERINGS_QUEUE.renderPanel = function (r) {
         <div class="value">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open AskEdgar</a>` : "—"}</div>
         <div class="label">Filed at</div>
         <div class="value">${fmtDate(r.filed_at)}</div>
+        <div class="label">Period Ending</div>
+        <div>${fieldDate(q, id, "period_ending", r.period_ending)}</div>
         <div class="label">Financing activity</div>
         <div class="value">${r.financing_activity === true ? '<span class="badge done">Yes</span>' : r.financing_activity === false ? '<span class="badge ins">No</span>' : "—"}</div>
         <div class="label">Last DB update</div>
@@ -1842,21 +1891,26 @@ WARRANTS_QUEUE.renderTableHead = () => `
     <th>Ticker / Form</th>
     <th>Filed</th>
     <th>Verified</th>
+    <th>Summary</th>
     <th>Details</th>
+    <th>Selling Shareholder</th>
+    <th>Owners 2</th>
+    <th>Registered</th>
     <th class="num">Warrants</th>
+    <th class="num">Warr. Remaining</th>
     <th class="num">Warr. Exercise $</th>
     <th class="num">Pre-funded $</th>
     <th>Exercisable</th>
     <th>Expiration</th>
     <th class="num">Conv $</th>
     <th class="num">Offering $</th>
+    <th class="num">Conv. Debt Remaining</th>
     <th>Convertible</th>
     <th>Maturity</th>
     <th>Owners</th>
-    <th>Owners 2</th>
     <th>Bank</th>
     <th>Price Protection</th>
-    <th>Selling Shareholder</th>
+    <th>Notes</th>
     <th>Filing</th>
     <th>Actions</th>
   </tr>`;
@@ -1878,21 +1932,26 @@ WARRANTS_QUEUE.renderRow = function (r) {
       </td>
       <td>${fmtDate(r.filed_at)}</td>
       <td>${booleanSelect(q, id, "verified", verifiedAttr)}</td>
+      <td>${fieldText(q, id, "summary", r.summary, "text-mid")}</td>
       <td>${fieldText(q, id, "details", r.details, "text-mid")}</td>
+      <td>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details, "text-long")}</td>
+      <td>${fieldText(q, id, "owners_two", r.owners_two, "text-mid")}</td>
+      <td>${fieldText(q, id, "registered", r.registered, "text-short")}</td>
       <td>${fieldNum(q, id, "warrants_amount", r.warrants_amount)}</td>
+      <td>${fieldNum(q, id, "warrants_remaining", r.warrants_remaining)}</td>
       <td>${fieldNum(q, id, "warrants_exercise_price", r.warrants_exercise_price)}</td>
       <td>${fieldNum(q, id, "prefunded_cost", r.prefunded_cost)}</td>
       <td>${fieldDate(q, id, "exercisable_date", r.exercisable_date)}</td>
       <td>${fieldDate(q, id, "expiration_date", r.expiration_date)}</td>
       <td>${fieldNum(q, id, "conversion_price", r.conversion_price)}</td>
       <td>${fieldNum(q, id, "offering_amount", r.offering_amount)}</td>
+      <td>${fieldNum(q, id, "convertible_debt_remaining", r.convertible_debt_remaining)}</td>
       <td>${fieldDate(q, id, "convertible_date", r.convertible_date)}</td>
       <td>${fieldDate(q, id, "maturity_date", r.maturity_date)}</td>
       <td>${fieldText(q, id, "owners", r.owners, "text-mid")}</td>
-      <td>${fieldText(q, id, "owners_two", r.owners_two, "text-mid")}</td>
       <td>${fieldText(q, id, "bank", r.bank, "text-short")}</td>
       <td>${fieldText(q, id, "price_protection", r.price_protection, "text-short")}</td>
-      <td>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details, "text-long")}</td>
+      <td>${fieldTextarea(q, id, "notes", r.notes, "text-long")}</td>
       <td>${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open</a>` : "—"}</td>
       <td>
         <div class="row-actions">
@@ -1915,11 +1974,13 @@ WARRANTS_QUEUE.renderPanel = function (r) {
       <h4>Source</h4>
       <div class="panel-fields">
         <div class="label">Filing (AskEdgar)</div>
-        <div class="value">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open AskEdgar</a>` : "—"}</div>
-        <div class="label">Filing (document)</div>
-        <div class="value">${r.document_url ? `<a href="${escapeHtml(r.document_url)}" target="_blank" rel="noopener">Open document</a>` : "—"}</div>
+        <div>${fieldText(q, id, "askedgar_url", r.askedgar_url)}</div>
+        <div class="label">Document URL</div>
+        <div>${fieldText(q, id, "document_url", r.document_url)}</div>
         <div class="label">Filed at</div>
-        <div class="value">${fmtDate(r.filed_at)}</div>
+        <div>${fieldDate(q, id, "filed_at", r.filed_at)}</div>
+        <div class="label">File No.</div>
+        <div>${fieldText(q, id, "file_no", r.file_no)}</div>
         <div class="label">Last DB update</div>
         <div class="value">${fmtDateTime(r.updated_at)}</div>
         <div class="label">Row ID</div>
@@ -1931,6 +1992,8 @@ WARRANTS_QUEUE.renderPanel = function (r) {
       <div class="panel-fields">
         <div class="label">Verified</div>
         <div>${booleanSelect(q, id, "verified", verifiedAttr)}</div>
+        <div class="label">Summary</div>
+        <div>${fieldText(q, id, "summary", r.summary)}</div>
         <div class="label">Ticker</div>
         <div>${fieldText(q, id, "ticker", r.ticker)}</div>
         <div class="label">Details</div>
@@ -1939,12 +2002,19 @@ WARRANTS_QUEUE.renderPanel = function (r) {
         <div>${fieldText(q, id, "form_type", r.form_type)}</div>
         <div class="label">Selling Shareholder Details</div>
         <div>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details)}</div>
+        <div class="label">Owners 2</div>
+        <div>${fieldText(q, id, "owners_two", r.owners_two)}</div>
+        <div class="label">Registered</div>
+        <div>${fieldText(q, id, "registered", r.registered)}</div>
+        <div class="label">Notes</div>
+        <div>${fieldTextarea(q, id, "notes", r.notes)}</div>
       </div>
     </div>
     <div class="panel-section">
       <h4>Warrants</h4>
       <div class="panel-fields">
         <div class="label">Warrants Amount</div><div>${fieldNum(q, id, "warrants_amount", r.warrants_amount)}</div>
+        <div class="label">Warrants Remaining</div><div>${fieldNum(q, id, "warrants_remaining", r.warrants_remaining)}</div>
         <div class="label">Exercise Price ($)</div><div>${fieldNum(q, id, "warrants_exercise_price", r.warrants_exercise_price)}</div>
         <div class="label">Pre-funded Cost ($)</div><div>${fieldNum(q, id, "prefunded_cost", r.prefunded_cost)}</div>
         <div class="label">Exercisable Date</div><div>${fieldDate(q, id, "exercisable_date", r.exercisable_date)}</div>
@@ -1956,6 +2026,7 @@ WARRANTS_QUEUE.renderPanel = function (r) {
       <div class="panel-fields">
         <div class="label">Conversion Price ($)</div><div>${fieldNum(q, id, "conversion_price", r.conversion_price)}</div>
         <div class="label">Offering Amount ($)</div><div>${fieldNum(q, id, "offering_amount", r.offering_amount)}</div>
+        <div class="label">Convertible Debt Remaining</div><div>${fieldNum(q, id, "convertible_debt_remaining", r.convertible_debt_remaining)}</div>
         <div class="label">Convertible Date</div><div>${fieldDate(q, id, "convertible_date", r.convertible_date)}</div>
         <div class="label">Maturity Date</div><div>${fieldDate(q, id, "maturity_date", r.maturity_date)}</div>
       </div>
@@ -1970,12 +2041,7 @@ WARRANTS_QUEUE.renderPanel = function (r) {
         <div class="label">PP Clause</div><div>${fieldTextarea(q, id, "pp_clause", r.pp_clause)}</div>
       </div>
     </div>
-    <div class="panel-section">
-      <h4>Source URLs</h4>
-      <div class="panel-fields">
-        <div class="label">AskEdgar URL</div><div>${fieldText(q, id, "askedgar_url", r.askedgar_url)}</div>
-      </div>
-    </div>`;
+    `;
 };
 
 // ---------------- keybinds (review + news panels) ----------------

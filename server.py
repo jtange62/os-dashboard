@@ -112,6 +112,7 @@ REVIEW_QUERY = f"""
         hf.form_type NOT LIKE '%%MANUAL%%'
         AND hf.filed_at = %(filed_at)s
         AND hf.category ~ 'NEGATIVE_FLOAT|HIGH|CRITICAL|SHARES_DECREASED|SHARES_MISMATCH'
+        AND hf.ticker IS NOT NULL
     ORDER BY hf.date_final DESC
     LIMIT 1000
 """
@@ -175,6 +176,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "/api/ownership": "/v1/ownership",
             "/api/offerings": "/v1/offerings",
             "/api/reverse-splits": "/v1/reverse-splits",
+            "/api/news-basic": "/v1/news-basic",
         }
         if path in askedgar_routes:
             flat = [(k, v) for k, vs in params.items() for v in vs]
