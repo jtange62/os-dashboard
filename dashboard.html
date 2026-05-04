@@ -895,7 +895,9 @@ async function fetchFilings(ticker) {
       sort: [{ filedAt: { order: "desc" } }],
     }),
   });
-  const j = await r.json();
+  const text = await r.text();
+  let j;
+  try { j = JSON.parse(text); } catch { throw new Error(r.ok ? "Invalid JSON from sec-api" : text || `HTTP ${r.status}`); }
   if (!r.ok) throw new Error(j?.error || j?.message || `HTTP ${r.status}`);
   return j;
 }
@@ -1729,6 +1731,10 @@ async function loadReviewByTicker() {
   reviewRowsByUrl = new Map(main.results.map((r) => [r.document_url, r]));
   dirtyByUrl = new Map();
 
+  // Ticker mode defaults to newest-first by reported date
+  reviewSortCol = "date_final";
+  reviewSortAsc = false;
+
   summary.innerHTML = `<strong>${main.count}</strong> records for <strong>${escapeHtml(ticker)}</strong> · all forms, all dates`;
   renderReviewTable(main.results);
 }
@@ -1736,12 +1742,13 @@ async function loadReviewByTicker() {
 function sortReviewRows(rows) {
   const col = reviewSortCol;
   const asc = reviewSortAsc;
-  const isText = col === "ticker";
+  const isText = col === "ticker" || col === "date_final" || col === "filed_at";
   return [...rows].sort((a, b) => {
     let va, vb;
     if (isText) {
-      va = (a[col] || "").toLowerCase();
-      vb = (b[col] || "").toLowerCase();
+      va = (a[col] || "");
+      vb = (b[col] || "");
+      if (col === "ticker") { va = va.toLowerCase(); vb = vb.toLowerCase(); }
       if (va < vb) return asc ? -1 : 1;
       if (va > vb) return asc ? 1 : -1;
       return 0;
@@ -1758,6 +1765,11 @@ function sortHeader(label, col) {
   const active = reviewSortCol === col;
   const arrow = active ? (reviewSortAsc ? "▲" : "▼") : "▲";
   return `<th class="num sortable${active ? " sort-active" : ""}" data-sort-col="${col}">${label}<span class="sort-arrow">${arrow}</span></th>`;
+}
+function dateSortHeader(label, col) {
+  const active = reviewSortCol === col;
+  const arrow = active ? (reviewSortAsc ? "▲" : "▼") : "▲";
+  return `<th class="sortable${active ? " sort-active" : ""}" data-sort-col="${col}">${label}<span class="sort-arrow">${arrow}</span></th>`;
 }
 
 function renderReviewTable(rows) {
@@ -1777,8 +1789,8 @@ function renderReviewTable(rows) {
       <table class="review-table">
         <thead><tr>
           <th class="sortable${tickerActive ? " sort-active" : ""}" data-sort-col="ticker">Ticker / Form<span class="sort-arrow">${tickerArrow}</span></th>
-          <th>Reported</th>
-          <th>Filed</th>
+          ${dateSortHeader("Reported", "date_final")}
+          ${dateSortHeader("Filed", "filed_at")}
           <th>Category</th>
           <th class="num">OS (raw)</th>
           <th class="num">OS Reported</th>

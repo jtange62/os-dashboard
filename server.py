@@ -138,7 +138,6 @@ REVIEW_QUERY = f"""
 REVIEW_BY_TICKER_QUERY = f"""
     SELECT {REVIEW_COLUMNS}
     FROM historical_float_final hf
-    {EXCHANGE_JOIN}
     WHERE hf.ticker = %(ticker)s
     ORDER BY hf.date_final DESC NULLS LAST, hf.filed_at DESC NULLS LAST
     LIMIT 1000
@@ -713,8 +712,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(data)
         except urllib.error.HTTPError as e:
             data = self._decode_body(e.read(), e.headers.get("Content-Encoding") if e.headers else None)
+            ct = (e.headers.get("Content-Type") if e.headers else None) or "application/json"
             self.send_response(e.code)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", ct)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
