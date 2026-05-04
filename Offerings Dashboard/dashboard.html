@@ -1230,7 +1230,7 @@ const OFFERINGS_QUEUE = {
   numeric: ["offering_amount", "share_price", "conversion_price", "shares_amount", "warrants_amount", "warrants_exercise_price"],
   boolean: ["done"],
   text: ["ticker", "headline", "selling_shareholder_details", "commentary", "disclosure_type", "askedgar_url", "potential_owners", "bank", "form_type", "offering_type", "doublecheck"],
-  date: ["period_ending"],
+  date: ["filed_at", "period_ending"],
   clientFilters: [
     { id: "of-commentary", label: "Commentary", field: "commentary", mode: "prefix",
       options: ["NOT DUPLICATE", "POTENTIAL DUPLICATE", "N/A"] },
@@ -1416,6 +1416,7 @@ function chicagoYesterdayISO() {
 }
 
 let reviewMode = "date";
+let newRecordCounter = 0;
 let reviewLoadedOnce = false;
 
 function setReviewMode(mode, opts = {}) {
@@ -1510,44 +1511,57 @@ document.getElementById("review-status-filter").addEventListener("change", () =>
   if (reviewMode === "date" || document.getElementById("review-ticker").value) loadReview();
 });
 
-async function createNewRecord() {
+function createNewRecord() {
   const q = activeQueue();
-  const seed = { mode: reviewMode };
-  // Pre-fill ticker in ticker mode
+  const tempId = --newRecordCounter; // negative IDs avoid collisions with real DB IDs
+
+  // Build placeholder row — all known fields set to null
+  const placeholder = { id: tempId, _isNew: true };
+  for (const col of [...q.numeric, ...q.boolean, ...q.text, ...q.date]) {
+    placeholder[col] = null;
+  }
+  // Extra columns that aren't in the editable lists but appear in rows
+  placeholder.filed_at = null;
+  placeholder.financing_activity = null;
+  placeholder.updated_at = null;
+
+  // Pre-fill seed values and mark them dirty so Save picks them up
+  const seedDirty = {};
+  const today = new Date().toISOString().slice(0, 10);
+  seedDirty.filed_at = today;
+  placeholder.filed_at = today;
+
   if (reviewMode === "ticker") {
     const t = document.getElementById("review-ticker").value.trim().toUpperCase();
-    if (t) seed.ticker = t;
+    if (t) { placeholder.ticker = t; seedDirty.ticker = t; }
   }
-  // Pre-fill filed_at with the date picker value in date mode
-  if (reviewMode === "date") {
-    const d = document.getElementById("review-date").value;
-    if (d) seed.filed_at = d;
-  }
-  try {
-    const res = await fetch(q.create, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(seed),
-    });
-    const j = await res.json();
-    if (!res.ok || j.status !== "success") throw new Error(j?.error?.message || `HTTP ${res.status}`);
-    toast(`Created new ${q.label} record #${j.result.id}`);
-    // Inject the new row into the current view
-    q.rows.set(Number(j.result.id), j.result);
-    const tbody = document.querySelector("#review-body tbody");
-    if (tbody) {
-      tbody.insertAdjacentHTML("afterbegin", q.renderRow(j.result));
-      attachReviewHandlers();
+
+  // Queue-specific defaults
+  if (q.key === "offerings") {
+    if (reviewMode === "date") {
+      seedDirty.done = "true";           placeholder.done = true;
+      seedDirty.financing_activity = "true"; placeholder.financing_activity = true;
     } else {
-      // No table yet — render one
-      renderReviewTable(q, [j.result]);
+      seedDirty.primary_filing = "true"; placeholder.primary_filing = true;
     }
-    pinId(q, j.result.id);
-    // Open the detail panel so the user can fill in fields
-    openReviewPanel(q, Number(j.result.id));
-  } catch (e) {
-    toast(`Failed to create record: ${e.message}`, "error");
+  } else if (q.key === "warrants") {
+    seedDirty.verified = "true";         placeholder.verified = true;
   }
+
+  q.rows.set(tempId, placeholder);
+  if (Object.keys(seedDirty).length) q.dirty.set(tempId, seedDirty);
+
+  // Render in table
+  const tbody = document.querySelector("#review-body tbody");
+  if (tbody) {
+    tbody.insertAdjacentHTML("afterbegin", q.renderRow(placeholder));
+    attachReviewHandlers();
+  } else {
+    renderReviewTable(q, [placeholder]);
+  }
+
+  // Open the detail panel so the user can fill in fields
+  openReviewPanel(q, tempId);
 }
 
 document.getElementById("new-record-btn").addEventListener("click", createNewRecord);
@@ -1765,6 +1779,9 @@ function updateSaveButtonsFor(q, id) {
 }
 
 async function saveRow(q, id) {
+  const row = q.rows.get(Number(id));
+  if (row && row._isNew) return saveNewRow(q, id);
+
   const updates = q.dirty.get(Number(id));
   if (!updates) return;
 
@@ -1807,10 +1824,78 @@ async function saveRow(q, id) {
   }
 }
 
+async function saveNewRow(q, tempId) {
+  const dirty = q.dirty.get(Number(tempId)) || {};
+  const fields = {};
+  for (const [k, v] of Object.entries(dirty)) {
+    const extra = { financing_activity: "boolean", primary_filing: "boolean" };
+    const t = fieldType(q, k) || extra[k] || "text";
+    if (t === "boolean") {
+      fields[k] = v === "" ? null : v === "true";
+    } else if (t === "text" || t === "date") {
+      fields[k] = v === "" ? null : v;
+    } else if (t === "numeric") {
+      const n = num(v);
+      fields[k] = (v === "" || v == null) ? null : n;
+    }
+  }
+
+  try {
+    const res = await fetch(q.create, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: reviewMode, fields }),
+    });
+    const j = await res.json();
+    if (!res.ok || j.status !== "success") throw new Error(j?.error?.message || `HTTP ${res.status}`);
+
+    // Remove temp row from memory and DOM
+    q.rows.delete(Number(tempId));
+    q.dirty.delete(Number(tempId));
+    const oldTr = document.querySelector(`#review-body tr[data-queue="${q.key}"][data-id="${tempId}"]`);
+    if (oldTr) oldTr.remove();
+
+    // Insert real row
+    const realId = Number(j.result.id);
+    q.rows.set(realId, j.result);
+    pinId(q, realId);
+    toast(`Created new ${q.label} record #${realId}`);
+
+    const tbody = document.querySelector("#review-body tbody");
+    if (tbody) {
+      tbody.insertAdjacentHTML("afterbegin", q.renderRow(j.result));
+      attachReviewHandlers();
+    }
+
+    // If panel was open for the temp row, re-open for the real row
+    const panel = document.getElementById("review-panel");
+    if (panel.classList.contains("open") && panel.dataset.queue === q.key && Number(panel.dataset.id) === Number(tempId)) {
+      panel.dataset.id = String(realId);
+      renderReviewPanel(q, j.result);
+    }
+  } catch (e) {
+    toast(`Failed to create record: ${e.message}`, "error");
+  }
+}
+
 function revertRow(q, id) {
-  q.dirty.delete(Number(id));
   const r = q.rows.get(Number(id));
   if (!r) return;
+
+  // For unsaved new rows, remove entirely instead of reverting to blanks
+  if (r._isNew) {
+    q.rows.delete(Number(id));
+    q.dirty.delete(Number(id));
+    const tr = document.querySelector(`#review-body tr[data-queue="${q.key}"][data-id="${id}"]`);
+    if (tr) tr.remove();
+    const panel = document.getElementById("review-panel");
+    if (panel.classList.contains("open") && panel.dataset.queue === q.key && Number(panel.dataset.id) === Number(id)) {
+      closeReviewPanel();
+    }
+    return;
+  }
+
+  q.dirty.delete(Number(id));
   const tr = document.querySelector(`#review-body tr[data-queue="${q.key}"][data-id="${id}"]`);
   if (tr) {
     tr.outerHTML = q.renderRow(r);
@@ -2060,7 +2145,7 @@ OFFERINGS_QUEUE.renderPanel = function (r) {
         <div class="label">Filing</div>
         <div class="value">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open AskEdgar</a>` : "—"}</div>
         <div class="label">Filed at</div>
-        <div class="value">${fmtDate(r.filed_at)}</div>
+        <div>${fieldDate(q, id, "filed_at", r.filed_at)}</div>
         <div class="label">Period Ending</div>
         <div>${fieldDate(q, id, "period_ending", r.period_ending)}</div>
         <div class="label">Financing activity</div>

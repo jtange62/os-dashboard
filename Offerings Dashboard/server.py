@@ -70,8 +70,10 @@ DB_CONFIG = {
 CHICAGO = zoneinfo.ZoneInfo("America/Chicago")
 
 # --- Authentication ---
-AUTH_USER = "jmt415"
-AUTH_PASS_HASH = hashlib.sha256(b"askedgar2115").hexdigest()
+AUTH_USERS = {
+    "jmt415": hashlib.sha256(b"askedgar2115").hexdigest(),
+    "rohit":  hashlib.sha256(b"rohitupwork").hexdigest(),
+}
 SESSIONS = set()          # in-memory session tokens (cleared on restart)
 
 # Editable columns in the Review Queue. Server-side allowlist.
@@ -94,6 +96,7 @@ EDITABLE_COLUMNS = {
     "bank": "text",
     "form_type": "text",
     "offering_type": "text",
+    "filed_at": "date",
     "period_ending": "date",
     "doublecheck": "text",
 }
@@ -415,7 +418,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         username = (fields.get("username") or [""])[0].strip()
         password = (fields.get("password") or [""])[0]
         pw_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
-        if username == AUTH_USER and pw_hash == AUTH_PASS_HASH:
+        if AUTH_USERS.get(username) == pw_hash:
             token = secrets.token_hex(32)
             SESSIONS.add(token)
             self.send_response(302)
@@ -582,16 +585,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         body = self._read_json_body()
         mode = body.get("mode", "date")
         table = self._offerings_table(mode)
+        # Accept a full fields dict (new) or fall back to legacy ticker/filed_at keys
+        fields = body.get("fields") or {}
+        if not fields:
+            for col in ("ticker", "filed_at"):
+                v = body.get(col)
+                if v is not None and v != "":
+                    fields[col] = v
+        allowed = {**EDITABLE_COLUMNS, "financing_activity": "boolean", "primary_filing": "boolean"}
         cols = []
         vals = []
-        for col in ("ticker", "filed_at"):
-            v = body.get(col)
-            if v is not None and v != "":
-                cols.append(col)
-                if col == "filed_at":
-                    vals.append(datetime.date.fromisoformat(str(v)[:10]))
-                else:
-                    vals.append(str(v))
+        for col, raw in fields.items():
+            if col not in allowed:
+                self._send_json(400, {"status": "error", "error": {"code": "field_not_editable", "message": col}})
+                return
+            vals.append(Handler._coerce(raw, allowed[col]))
+            cols.append(col)
         if cols:
             placeholders = ", ".join(["%s"] * len(cols))
             col_list = ", ".join(cols)
@@ -603,9 +612,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             sql = f"INSERT INTO {table} DEFAULT VALUES RETURNING {REVIEW_COLUMNS}"
             vals = []
         with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql, vals)
-            row = cur.fetchone()
-            conn.commit()
+            try:
+                cur.execute(sql, vals)
+                row = cur.fetchone()
+                conn.commit()
+            except psycopg.errors.UniqueViolation:
+                conn.rollback()
+                cur.execute(f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), COALESCE((SELECT MAX(id) FROM {table}), 0) + 1, false)")
+                conn.commit()
+                cur.execute(sql, vals)
+                row = cur.fetchone()
+                conn.commit()
         self._send_json(200, {"status": "success", "result": row})
 
     # ----------------- Warrants & Convertibles handlers -----------------
@@ -726,16 +743,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         body = self._read_json_body()
         mode = body.get("mode", "date")
         table = self._warrants_table(mode)
+        # Accept a full fields dict (new) or fall back to legacy ticker/filed_at keys
+        fields = body.get("fields") or {}
+        if not fields:
+            for col in ("ticker", "filed_at"):
+                v = body.get(col)
+                if v is not None and v != "":
+                    fields[col] = v
+        allowed = WARRANTS_EDITABLE_COLUMNS  # already includes filed_at
         cols = []
         vals = []
-        for col in ("ticker", "filed_at"):
-            v = body.get(col)
-            if v is not None and v != "":
-                cols.append(col)
-                if col == "filed_at":
-                    vals.append(datetime.date.fromisoformat(str(v)[:10]))
-                else:
-                    vals.append(str(v))
+        for col, raw in fields.items():
+            if col not in allowed:
+                self._send_json(400, {"status": "error", "error": {"code": "field_not_editable", "message": col}})
+                return
+            vals.append(Handler._coerce(raw, allowed[col]))
+            cols.append(col)
         if cols:
             placeholders = ", ".join(["%s"] * len(cols))
             col_list = ", ".join(cols)
@@ -747,9 +770,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             sql = f"INSERT INTO {table} DEFAULT VALUES RETURNING {WARRANTS_REVIEW_COLUMNS}"
             vals = []
         with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql, vals)
-            row = cur.fetchone()
-            conn.commit()
+            try:
+                cur.execute(sql, vals)
+                row = cur.fetchone()
+                conn.commit()
+            except psycopg.errors.UniqueViolation:
+                conn.rollback()
+                cur.execute(f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), COALESCE((SELECT MAX(id) FROM {table}), 0) + 1, false)")
+                conn.commit()
+                cur.execute(sql, vals)
+                row = cur.fetchone()
+                conn.commit()
         self._send_json(200, {"status": "success", "result": row})
 
     # -------------------- AI analysis --------------------
