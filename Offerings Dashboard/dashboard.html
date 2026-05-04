@@ -476,6 +476,39 @@
   .toast.success { border-color: var(--green); }
   .toast.error { border-color: var(--red); color: var(--red); }
 
+  .form-link { color: var(--accent); text-decoration: none; font-size: 12px; }
+  .form-link:hover { text-decoration: underline; }
+
+  /* Multi-select filter dropdown */
+  .mf-wrap { position: relative; display: inline-block; }
+  .mf-btn {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    padding: 4px 10px; border-radius: 4px; font-size: 13px; cursor: pointer;
+    white-space: nowrap; min-width: 90px; text-align: left;
+  }
+  .mf-btn:hover { border-color: var(--accent); }
+  .mf-btn::after { content: " ▾"; font-size: 10px; color: var(--muted); }
+  .mf-btn.has-sel { border-color: var(--accent); color: var(--accent); }
+  .mf-drop {
+    display: none; position: absolute; top: 100%; left: 0; margin-top: 4px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 0; z-index: 200; min-width: 220px;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.5);
+  }
+  .mf-drop.open { display: block; }
+  .mf-drop label {
+    display: flex; align-items: center; gap: 8px; padding: 5px 12px;
+    cursor: pointer; font-size: 13px; white-space: nowrap;
+  }
+  .mf-drop label:hover { background: var(--panel-2); }
+  .mf-drop input[type="checkbox"] { accent-color: var(--accent); }
+  .mf-drop .mf-clear {
+    display: block; text-align: center; padding: 5px 12px; margin-top: 2px;
+    border-top: 1px solid var(--border); color: var(--muted); font-size: 12px;
+    cursor: pointer;
+  }
+  .mf-drop .mf-clear:hover { color: var(--text); }
+
   .news-row { cursor: pointer; }
   .news-row:hover td { background: var(--panel-2); }
   .news-summary-snippet {
@@ -557,6 +590,7 @@
           <option value="notnull">Set (not null)</option>
         </select>
       </label>
+      <span id="queue-filters"></span>
     </div>
 
     <form id="review-form-date" class="meta-row" style="margin-bottom:14px;">
@@ -1197,6 +1231,17 @@ const OFFERINGS_QUEUE = {
   boolean: ["done"],
   text: ["ticker", "headline", "selling_shareholder_details", "commentary", "disclosure_type", "askedgar_url", "potential_owners", "bank", "form_type", "offering_type", "doublecheck"],
   date: ["period_ending"],
+  clientFilters: [
+    { id: "of-commentary", label: "Commentary", field: "commentary", mode: "prefix",
+      options: ["NOT DUPLICATE", "POTENTIAL DUPLICATE", "N/A"] },
+    { id: "of-doublecheck", label: "Doublecheck", field: "doublecheck", mode: "contains",
+      options: [
+        { label: "TRUE", match: "Done: True" },
+        { label: "FALSE", match: "Done: False" },
+        { label: "NEEDS ATTENTION", match: "NEEDS ATTENTION" },
+        { label: "OK", match: "Status: OK" },
+      ] },
+  ],
   rows: new Map(),
   dirty: new Map(),
   stale: new Set(),
@@ -1222,6 +1267,16 @@ const WARRANTS_QUEUE = {
   boolean: ["verified"],
   text: ["ticker", "form_type", "details", "selling_shareholder_details", "owners_two", "registered", "summary", "notes", "askedgar_url", "pp_clause", "price_protection", "owners", "bank", "document_url", "file_no"],
   date: ["filed_at", "expiration_date", "exercisable_date", "maturity_date", "convertible_date"],
+  clientFilters: [
+    { id: "wf-owners2", label: "Category", field: "owners_two", mode: "prefix",
+      options: [
+        "NOT WARRANT OR CONVERTIBLE",
+        "NEW WARRANT OR CONVERTIBLE",
+        "POTENTIAL DUPLICATE",
+        "POTENTIAL ADJUSTMENT",
+        "POTENTIAL REGISTRATION",
+      ] },
+  ],
   rows: new Map(),
   dirty: new Map(),
   stale: new Set(),
@@ -1233,6 +1288,105 @@ const WARRANTS_QUEUE = {
 const QUEUES = { offerings: OFFERINGS_QUEUE, warrants: WARRANTS_QUEUE };
 let activeQueueKey = "offerings";
 const activeQueue = () => QUEUES[activeQueueKey];
+
+// --- Multi-select filter dropdowns ---
+function buildMultiFilters(q) {
+  const container = document.getElementById("queue-filters");
+  container.innerHTML = "";
+  if (!q.clientFilters || !q.clientFilters.length) return;
+  q.clientFilters.forEach((f) => {
+    const wrap = document.createElement("span");
+    wrap.className = "mf-wrap";
+    wrap.dataset.filterId = f.id;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "mf-btn";
+    btn.textContent = f.label;
+    const drop = document.createElement("div");
+    drop.className = "mf-drop";
+    const opts = f.options.map((o) => typeof o === "string" ? { label: o, match: o } : o);
+    opts.forEach((o) => {
+      const lbl = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = o.match;
+      cb.addEventListener("change", () => { syncMultiBtn(f.id); applyClientFilters(); });
+      lbl.appendChild(cb);
+      lbl.appendChild(document.createTextNode(o.label));
+      drop.appendChild(lbl);
+    });
+    const clr = document.createElement("span");
+    clr.className = "mf-clear";
+    clr.textContent = "Clear";
+    clr.addEventListener("click", () => {
+      drop.querySelectorAll("input").forEach((cb) => { cb.checked = false; });
+      syncMultiBtn(f.id);
+      applyClientFilters();
+    });
+    drop.appendChild(clr);
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      document.querySelectorAll(".mf-drop.open").forEach((d) => { if (d !== drop) d.classList.remove("open"); });
+      drop.classList.toggle("open");
+    });
+    wrap.appendChild(btn);
+    wrap.appendChild(drop);
+    container.appendChild(wrap);
+  });
+}
+
+function syncMultiBtn(filterId) {
+  const wrap = document.querySelector(`.mf-wrap[data-filter-id="${filterId}"]`);
+  if (!wrap) return;
+  const btn = wrap.querySelector(".mf-btn");
+  const checked = wrap.querySelectorAll("input:checked");
+  const q = activeQueue();
+  const f = (q.clientFilters || []).find((x) => x.id === filterId);
+  if (checked.length === 0) {
+    btn.textContent = f ? f.label : "Filter";
+    btn.classList.remove("has-sel");
+  } else {
+    btn.textContent = `${f ? f.label : "Filter"} (${checked.length})`;
+    btn.classList.add("has-sel");
+  }
+}
+
+function getMultiFilterSelections(filterId) {
+  const wrap = document.querySelector(`.mf-wrap[data-filter-id="${filterId}"]`);
+  if (!wrap) return [];
+  return [...wrap.querySelectorAll("input:checked")].map((cb) => cb.value);
+}
+
+function applyClientFilters() {
+  const q = activeQueue();
+  const all = [...q.rows.values()];
+  const filtered = filterRows(q, all);
+  renderReviewTable(q, filtered, true);
+}
+
+function filterRows(q, rows) {
+  if (!q.clientFilters || !q.clientFilters.length) return rows;
+  return rows.filter((r) => {
+    for (const f of q.clientFilters) {
+      const selected = getMultiFilterSelections(f.id);
+      if (!selected.length) continue;
+      const raw = (r[f.field] || "").toString().toUpperCase();
+      // "prefix" mode: match only against the category label (before first ':')
+      // to avoid false positives from description text containing keywords.
+      const val = f.mode === "prefix" ? raw.split(":")[0] : raw;
+      const matches = selected.some((s) => val.includes(s.toUpperCase()));
+      if (!matches) return false;
+    }
+    return true;
+  });
+}
+
+// Close multi-filter dropdowns on outside click
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".mf-wrap")) {
+    document.querySelectorAll(".mf-drop.open").forEach((d) => d.classList.remove("open"));
+  }
+});
 
 function fieldType(q, field) {
   if (q.numeric.includes(field)) return "numeric";
@@ -1292,6 +1446,8 @@ function setSubtab(key, opts = {}) {
   const stored = urlParams.has(q.statusUrlParam) ? urlParams.get(q.statusUrlParam) : q.defaultStatus;
   const sel = document.getElementById("review-status-filter");
   sel.value = [...sel.options].some((o) => o.value === stored) ? stored : "";
+  // Build queue-specific multi-select filters.
+  buildMultiFilters(q);
   // Persist sub-tab in URL.
   const u = new URL(window.location);
   u.searchParams.set("rsub", key);
@@ -1442,9 +1598,11 @@ async function loadReviewByDate() {
   q.rows = new Map(all.map((r) => [Number(r.id), r]));
   q.dirty = new Map();
 
+  const filtered = filterRows(q, all);
   const statusLabel = status ? ` · ${q.statusField} = <strong>${escapeHtml(status)}</strong>` : "";
-  summary.innerHTML = `<strong>${main.count}</strong> matching · <strong>${pinnedRows.length}</strong> pinned (filter changed) · filed_at <strong>${main.filed_at}</strong>${statusLabel}`;
-  renderReviewTable(q, all);
+  const filterNote = filtered.length < all.length ? ` · showing <strong>${filtered.length}</strong>` : "";
+  summary.innerHTML = `<strong>${main.count}</strong> matching · <strong>${pinnedRows.length}</strong> pinned (filter changed) · filed_at <strong>${main.filed_at}</strong>${statusLabel}${filterNote}`;
+  renderReviewTable(q, filtered);
 }
 
 async function loadReviewByTicker() {
@@ -1479,14 +1637,19 @@ async function loadReviewByTicker() {
   q.rows = new Map(main.results.map((r) => [Number(r.id), r]));
   q.dirty = new Map();
 
+  const filtered = filterRows(q, main.results);
   const statusLabel = status ? ` · ${q.statusField} = <strong>${escapeHtml(status)}</strong>` : "";
-  summary.innerHTML = `<strong>${main.count}</strong> records for <strong>${escapeHtml(ticker)}</strong> · all dates${statusLabel}`;
-  renderReviewTable(q, main.results);
+  const filterNote = filtered.length < main.results.length ? ` · showing <strong>${filtered.length}</strong>` : "";
+  summary.innerHTML = `<strong>${main.count}</strong> records for <strong>${escapeHtml(ticker)}</strong> · all dates${statusLabel}${filterNote}`;
+  renderReviewTable(q, filtered);
 }
 
-function renderReviewTable(q, rows) {
+function renderReviewTable(q, rows, isRefilter) {
+  // Track visible row IDs for panel navigation (respects client-side filters).
+  q.visibleIds = rows.map((r) => Number(r.id));
   if (!rows.length) {
-    const msg = reviewMode === "ticker" ? "No records for this ticker." : "No records for this date.";
+    const msg = isRefilter ? "No records match the selected filters." :
+      reviewMode === "ticker" ? "No records for this ticker." : "No records for this date.";
     document.getElementById("review-body").innerHTML = `<div class="status">${msg}</div>`;
     return;
   }
@@ -1698,7 +1861,7 @@ function renderReviewPanel(q, r) {
     el.addEventListener("input", () => onEditableChange(el));
     el.addEventListener("change", () => onEditableChange(el));
   });
-  const ids = [...q.rows.keys()];
+  const ids = q.visibleIds || [...q.rows.keys()];
   const idx = ids.indexOf(id);
   document.getElementById("panel-position").textContent = idx >= 0 ? `${idx + 1} / ${ids.length}` : "";
   document.getElementById("panel-prev").disabled = idx <= 0;
@@ -1720,7 +1883,7 @@ function panelNavigate(delta) {
   const id = Number(panel.dataset.id);
   const q = QUEUES[panel.dataset.queue];
   if (!id || !q) return;
-  const ids = [...q.rows.keys()];
+  const ids = q.visibleIds || [...q.rows.keys()];
   const i = ids.indexOf(id);
   if (i < 0) return;
   const next = i + delta;
@@ -1854,7 +2017,7 @@ OFFERINGS_QUEUE.renderRow = function (r) {
         ${dilutionLinks(r.ticker)}
         ${pinned ? `<span class="badge pin" data-queue="${q.key}" data-unpin="${id}" title="Click to unpin">pinned ✕</span>` : ""}
         ${stale ? `<span class="badge ins">stale</span>` : ""}
-        <div style="margin-top:4px;">${fieldText(q, id, "form_type", r.form_type, "text-short")}</div>
+        <div style="margin-top:4px;">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener" class="form-link">${escapeHtml(r.form_type || "—")}</a>` : escapeHtml(r.form_type || "—")}</div>
       </td>
       <td>${fmtDate(r.filed_at)}</td>
       <td>${fieldText(q, id, "offering_type", r.offering_type, "text-short")}</td>
@@ -2002,7 +2165,7 @@ WARRANTS_QUEUE.renderRow = function (r) {
         ${dilutionLinks(r.ticker)}
         ${pinned ? `<span class="badge pin" data-queue="${q.key}" data-unpin="${id}" title="Click to unpin">pinned ✕</span>` : ""}
         ${stale ? `<span class="badge ins">stale</span>` : ""}
-        <div style="margin-top:4px;">${fieldText(q, id, "form_type", r.form_type, "text-short")}</div>
+        <div style="margin-top:4px;">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener" class="form-link">${escapeHtml(r.form_type || "—")}</a>` : escapeHtml(r.form_type || "—")}</div>
       </td>
       <td>${fmtDate(r.filed_at)}</td>
       <td>${booleanSelect(q, id, "verified", verifiedAttr)}</td>
@@ -2047,8 +2210,8 @@ WARRANTS_QUEUE.renderPanel = function (r) {
     <div class="panel-section">
       <h4>Source</h4>
       <div class="panel-fields">
-        <div class="label">Filing (AskEdgar)</div>
-        <div>${fieldText(q, id, "askedgar_url", r.askedgar_url)}</div>
+        <div class="label">Filing</div>
+        <div class="value">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open AskEdgar</a>` : "—"}</div>
         <div class="label">Document URL</div>
         <div>${fieldText(q, id, "document_url", r.document_url)}</div>
         <div class="label">Filed at</div>

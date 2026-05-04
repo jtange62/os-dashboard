@@ -9,10 +9,14 @@ Configuration is loaded from `config.json` next to this file. See
 import datetime
 import decimal
 import gzip
+import hashlib
 import http.server
+import http.cookies
 import json
+import secrets
 import socketserver
 import sys
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -50,6 +54,13 @@ ANTHROPIC_MODEL = "claude-opus-4-7"
 # ~5000 tokens worth of filing text. 1 token ~= 4 chars for English prose.
 FILING_TEXT_MAX_CHARS = 20000
 
+# --- Background analyzer configuration ---
+BG_INTERVAL = 30 * 60          # seconds between sweeps (30 minutes)
+BG_DELAY_BETWEEN = 10          # seconds between successful API calls
+BG_INITIAL_BACKOFF = 30        # first retry wait on 429/529
+BG_MAX_BACKOFF = 600           # cap backoff at 10 minutes
+BG_MAX_RETRIES = 8             # max retries per row on rate limit
+
 DB_CONFIG = {
     **_CFG["postgres"],
     "connect_timeout": 15,
@@ -57,6 +68,11 @@ DB_CONFIG = {
 }
 
 CHICAGO = zoneinfo.ZoneInfo("America/Chicago")
+
+# --- Authentication ---
+AUTH_USER = "jmt415"
+AUTH_PASS_HASH = hashlib.sha256(b"askedgar2115").hexdigest()
+SESSIONS = set()          # in-memory session tokens (cleared on restart)
 
 # Editable columns in the Review Queue. Server-side allowlist.
 # `id` is the PK and is intentionally NOT editable.
@@ -257,12 +273,107 @@ def get_conn():
     return psycopg.connect(**DB_CONFIG)
 
 
+class AnthropicError(Exception):
+    """Raised when the Anthropic API returns an HTTP error."""
+    def __init__(self, code, body, headers=None):
+        self.code = code
+        self.body = body
+        self.headers = headers
+        super().__init__(f"Anthropic HTTP {code}: {body[:200]}")
+
+
+_LOGIN_PAGE = """\
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login — Offerings Dashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f0f2f5;display:flex;
+     align-items:center;justify-content:center;min-height:100vh}
+.card{background:#fff;padding:2rem;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.12);
+      width:340px}
+h2{margin-bottom:1.2rem;font-size:1.25rem;color:#1a1a2e}
+label{display:block;font-size:.85rem;color:#555;margin-bottom:.3rem}
+input{width:100%%;padding:.55rem .7rem;border:1px solid #ccc;border-radius:4px;
+      font-size:.95rem;margin-bottom:1rem}
+input:focus{outline:none;border-color:#4361ee}
+button{width:100%%;padding:.6rem;background:#4361ee;color:#fff;border:none;
+       border-radius:4px;font-size:1rem;cursor:pointer}
+button:hover{background:#3a56d4}
+.err{color:#d32f2f;font-size:.85rem;margin-bottom:.8rem;display:%(err_display)s}
+</style></head>
+<body><div class="card">
+<h2>Offerings Dashboard</h2>
+<div class="err">%(err_msg)s</div>
+<form method="POST" action="/login">
+<label for="u">Username</label><input id="u" name="username" autofocus>
+<label for="p">Password</label><input id="p" name="password" type="password">
+<button type="submit">Log in</button>
+</form></div></body></html>
+"""
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
+    # --- Authentication helpers ---
+
+    def _get_session(self):
+        """Return the session token from the cookie, or None."""
+        cookie_header = self.headers.get("Cookie", "")
+        c = http.cookies.SimpleCookie()
+        try:
+            c.load(cookie_header)
+        except http.cookies.CookieError:
+            return None
+        morsel = c.get("session")
+        return morsel.value if morsel else None
+
+    def _is_authenticated(self):
+        token = self._get_session()
+        return token is not None and token in SESSIONS
+
+    def _send_login_page(self, error=""):
+        html = _LOGIN_PAGE % {
+            "err_display": "block" if error else "none",
+            "err_msg": error,
+        }
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _require_auth(self):
+        """Return True if authenticated. If not, redirect to /login and return False."""
+        if self._is_authenticated():
+            return True
+        self.send_response(302)
+        self.send_header("Location", "/login")
+        self.end_headers()
+        return False
+
+    # --- Routes ---
+
     def do_GET(self):
         url = urllib.parse.urlparse(self.path)
+        if url.path == "/login":
+            self._send_login_page()
+            return
+        if url.path == "/logout":
+            token = self._get_session()
+            if token:
+                SESSIONS.discard(token)
+            self.send_response(302)
+            self.send_header("Set-Cookie", "session=; Path=/; Max-Age=0")
+            self.send_header("Location", "/login")
+            self.end_headers()
+            return
+        if not self._require_auth():
+            return
         if url.path.startswith("/api/"):
             self._handle_api_get(url)
             return
@@ -272,6 +383,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         url = urllib.parse.urlparse(self.path)
+        if url.path == "/login":
+            self._handle_login()
+            return
+        if not self._require_auth():
+            return
         try:
             if url.path == "/api/review/by-ids":
                 self._handle_review_by_ids()
@@ -291,6 +407,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_error(404, "Not Found")
         except Exception as e:
             self._send_json(500, {"status": "error", "error": {"code": "server_error", "message": str(e)}})
+
+    def _handle_login(self):
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        body = self.rfile.read(length).decode("utf-8") if length else ""
+        fields = urllib.parse.parse_qs(body, keep_blank_values=True)
+        username = (fields.get("username") or [""])[0].strip()
+        password = (fields.get("password") or [""])[0]
+        pw_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+        if username == AUTH_USER and pw_hash == AUTH_PASS_HASH:
+            token = secrets.token_hex(32)
+            SESSIONS.add(token)
+            self.send_response(302)
+            self.send_header("Set-Cookie", f"session={token}; Path=/; HttpOnly; SameSite=Lax")
+            self.send_header("Location", "/")
+            self.end_headers()
+        else:
+            self._send_login_page("Invalid username or password.")
 
     def _handle_api_get(self, url):
         params = urllib.parse.parse_qs(url.query, keep_blank_values=True)
@@ -655,8 +788,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         try:
-            ctx = self._gather_ai_context(ticker, row)
-            analysis = self._call_anthropic(row, ctx)
+            ctx = Handler._gather_ai_context(ticker, row)
+            analysis = Handler._call_anthropic(row, ctx)
         except Exception as e:
             self._send_json(502, {"status": "error", "error": {"code": "analyzer_failed", "message": str(e)}})
             return
@@ -746,13 +879,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             text = text[:FILING_TEXT_MAX_CHARS] + "\n\n[...truncated...]"
         return text
 
-    def _gather_ai_context(self, ticker, row):
+    @staticmethod
+    def _gather_ai_context(ticker, row):
         ctx = {}
         # Filing text — extract the real filing URL from askedgar_url
-        filing_url = self._extract_filing_url(row.get("askedgar_url"))
+        filing_url = Handler._extract_filing_url(row.get("askedgar_url"))
         if filing_url:
             try:
-                txt = self._get_filing_text(filing_url)
+                txt = Handler._get_filing_text(filing_url)
                 if txt:
                     ctx["filing_text"] = txt
             except Exception as e:
@@ -760,14 +894,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         # Recent offerings (5 most recent via AskEdgar advanced endpoint)
         try:
-            off = self._askedgar_get("/v1/offerings-advanced", {"ticker": ticker, "limit": 5, "page": 1})
+            off = Handler._askedgar_get("/v1/offerings-advanced", {"ticker": ticker, "limit": 5, "page": 1})
             ctx["recent_offerings"] = (off or {}).get("results") or []
         except Exception as e:
             ctx["recent_offerings_error"] = str(e)
 
         # Recent news & filings (5 most recent)
         try:
-            news = self._askedgar_get("/v1/news-basic", {"ticker": ticker, "limit": 5, "page": 1})
+            news = Handler._askedgar_get("/v1/news-basic", {"ticker": ticker, "limit": 5, "page": 1})
             ctx["recent_news"] = (news or {}).get("results") or []
         except Exception as e:
             ctx["recent_news_error"] = str(e)
@@ -962,7 +1096,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 resp_data = resp.read()
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Anthropic HTTP {e.code}: {err_body}")
+            raise AnthropicError(e.code, err_body, e.headers)
         parsed = json.loads(resp_data.decode("utf-8"))
         text_parts = []
         for block in parsed.get("content") or []:
@@ -1076,15 +1210,160 @@ def _ensure_columns():
         sys.stderr.write(f"[server] column migration note: {e}\n")
 
 
+# ---------------------------------------------------------------------------
+# Background analyzer — proactively fills doublecheck for recent rows
+# ---------------------------------------------------------------------------
+
+def _bg_log(msg):
+    ts = datetime.datetime.now(CHICAGO).strftime("%Y-%m-%d %H:%M:%S")
+    sys.stderr.write(f"[bg-analyzer {ts}] {msg}\n")
+
+
+def _bg_analyze_loop(stop_event):
+    """Background thread: find un-analyzed rows and run AI doublecheck."""
+    _bg_log("Started (interval=%ds, delay=%ds)" % (BG_INTERVAL, BG_DELAY_BETWEEN))
+    while not stop_event.is_set():
+        try:
+            _bg_run_batch(stop_event)
+        except Exception as e:
+            _bg_log(f"Batch error (will retry next cycle): {e}")
+        # Wait for next cycle; wakes immediately if stop_event is set
+        stop_event.wait(BG_INTERVAL)
+    _bg_log("Stopped.")
+
+
+def _bg_run_batch(stop_event):
+    """Single sweep: find candidate rows and analyze each one."""
+    today = datetime.datetime.now(CHICAGO).date()
+    yesterday = today - datetime.timedelta(days=1)
+
+    sql = f"""
+        SELECT {REVIEW_COLUMNS}
+        FROM offering_data_new_final_clone
+        WHERE filed_at IN (%(today)s, %(yesterday)s)
+          AND doublecheck IS NULL
+          AND financing_activity = TRUE
+          AND headline IS NOT NULL
+          AND selling_shareholder_details IS NOT NULL
+          AND commentary IS NOT NULL
+        ORDER BY filed_at DESC, id ASC
+    """
+    try:
+        with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, {"today": today, "yesterday": yesterday})
+            rows = cur.fetchall()
+    except Exception as e:
+        _bg_log(f"DB query failed: {e}")
+        return
+
+    if not rows:
+        _bg_log("No un-analyzed rows found.")
+        return
+
+    _bg_log(f"Found {len(rows)} rows to analyze.")
+    analyzed = 0
+    errors = 0
+
+    for i, row in enumerate(rows):
+        if stop_event.is_set():
+            _bg_log("Stop requested, aborting batch.")
+            return
+
+        row_id = row["id"]
+        ticker = (row.get("ticker") or "").upper()
+        if not ticker:
+            _bg_log(f"  [{i+1}/{len(rows)}] id={row_id} — skipped (no ticker)")
+            continue
+
+        _bg_log(f"  [{i+1}/{len(rows)}] {ticker} id={row_id}")
+
+        success = _bg_analyze_one(row_id, ticker, row, stop_event)
+        if success:
+            analyzed += 1
+        else:
+            errors += 1
+
+        # Delay between calls (unless stopping or last row)
+        if i < len(rows) - 1 and not stop_event.is_set():
+            stop_event.wait(BG_DELAY_BETWEEN)
+
+    _bg_log(f"Batch complete: analyzed={analyzed} errors={errors} total={len(rows)}")
+
+
+def _bg_analyze_one(row_id, ticker, row, stop_event, attempt=0):
+    """Analyze a single row. Returns True on success, False on failure."""
+    try:
+        ctx = Handler._gather_ai_context(ticker, row)
+        analysis = Handler._call_anthropic(row, ctx)
+    except AnthropicError as e:
+        is_rate_limit = e.code in (429, 529) or (e.code == 502 and "rate_limit" in e.body)
+        if is_rate_limit and attempt < BG_MAX_RETRIES:
+            backoff = min(BG_INITIAL_BACKOFF * (2 ** attempt), BG_MAX_BACKOFF)
+            # Respect Retry-After header
+            if e.headers:
+                retry_after = e.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        backoff = max(backoff, int(retry_after))
+                    except ValueError:
+                        pass
+            _bg_log(f"    Rate limited ({e.code}), retry {attempt+1}/{BG_MAX_RETRIES} in {backoff}s")
+            if stop_event.wait(backoff):  # Returns True if event is set
+                return False
+            return _bg_analyze_one(row_id, ticker, row, stop_event, attempt + 1)
+        _bg_log(f"    FAILED ({e.code}): {e.body[:200]}")
+        return False
+    except Exception as e:
+        _bg_log(f"    FAILED: {e}")
+        return False
+
+    # Save result — guard with doublecheck IS NULL to avoid overwriting concurrent analysis
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE offering_data_new_final_clone "
+                "SET doublecheck = %s, updated_at = NOW() "
+                "WHERE id = %s AND doublecheck IS NULL",
+                (analysis, row_id),
+            )
+            conn.commit()
+        _bg_log(f"    OK")
+        return True
+    except Exception as e:
+        _bg_log(f"    DB save failed: {e}")
+        return False
+
+
 def main():
     _ensure_columns()
+
+    # Start background analyzer thread (only if Anthropic key is configured)
+    stop_event = threading.Event()
+    bg_thread = None
+    if ANTHROPIC_KEY:
+        bg_thread = threading.Thread(
+            target=_bg_analyze_loop,
+            args=(stop_event,),
+            name="bg-analyzer",
+            daemon=True,
+        )
+        bg_thread.start()
+    else:
+        sys.stderr.write("[server] anthropic_api_key not set, background analyzer disabled.\n")
+
     with ReusableTCPServer(("127.0.0.1", PORT), Handler) as httpd:
         print(f"Offerings Dashboard running at http://localhost:{PORT}/")
+        if bg_thread:
+            print("Background analyzer active (30-min interval).")
         print("Press Ctrl+C to stop.")
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
-            print("\nShutting down.")
+            print("\nShutting down...")
+            stop_event.set()
+            if bg_thread:
+                bg_thread.join(timeout=5)
+            print("Done.")
 
 
 if __name__ == "__main__":
