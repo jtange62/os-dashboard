@@ -397,6 +397,15 @@
   }
   .panel-longtext ul { margin: 8px 0 8px 20px; padding: 0; }
   .panel-longtext li { margin: 4px 0; }
+
+  /* AI Doublecheck analysis */
+  .ai-analysis-body { font-size: 13px; }
+  .ai-analysis-text { white-space: pre-wrap; line-height: 1.55; }
+  .ai-analysis-loading { font-style: italic; color: var(--accent); }
+  .ai-analysis-error { color: #e74c3c; font-size: 12px; }
+  .ai-analysis-cell { max-width: 160px; }
+  .ai-truncated { font-size: 11px; color: var(--muted); cursor: help; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
   .close-btn {
     background: transparent;
     border: 1px solid var(--border);
@@ -542,8 +551,8 @@
       <label><span id="review-status-label">Done</span>:
         <select id="review-status-filter">
           <option value="">All</option>
-          <option value="true">Yes</option>
-          <option value="false">No</option>
+          <option value="true">True</option>
+          <option value="false">False</option>
           <option value="null">Empty (null)</option>
           <option value="notnull">Set (not null)</option>
         </select>
@@ -1183,10 +1192,10 @@ const OFFERINGS_QUEUE = {
   statusLabel: "Done",
   statusUrlParam: "rdone",
   serverParam: "done",
-  defaultStatus: "true",
+  defaultStatus: "",
   numeric: ["offering_amount", "share_price", "conversion_price", "shares_amount", "warrants_amount", "warrants_exercise_price"],
   boolean: ["done"],
-  text: ["ticker", "headline", "selling_shareholder_details", "commentary", "disclosure_type", "askedgar_url", "potential_owners", "bank", "form_type"],
+  text: ["ticker", "headline", "selling_shareholder_details", "commentary", "disclosure_type", "askedgar_url", "potential_owners", "bank", "form_type", "offering_type", "doublecheck"],
   date: ["period_ending"],
   rows: new Map(),
   dirty: new Map(),
@@ -1208,7 +1217,7 @@ const WARRANTS_QUEUE = {
   statusLabel: "Verified",
   statusUrlParam: "rverified",
   serverParam: "verified",
-  defaultStatus: "true",
+  defaultStatus: "",
   numeric: ["warrants_amount", "warrants_exercise_price", "warrants_remaining", "prefunded_cost", "offering_amount", "conversion_price", "convertible_debt_remaining"],
   boolean: ["verified"],
   text: ["ticker", "form_type", "details", "selling_shareholder_details", "owners_two", "registered", "summary", "notes", "askedgar_url", "pp_clause", "price_protection", "owners", "bank", "document_url", "file_no"],
@@ -1695,6 +1704,14 @@ function renderReviewPanel(q, r) {
   document.getElementById("panel-prev").disabled = idx <= 0;
   document.getElementById("panel-next").disabled = idx < 0 || idx >= ids.length - 1;
   updateSaveButtonsFor(q, id);
+  // AI Doublecheck: attach regenerate handler and auto-trigger
+  const regenBtn = document.getElementById("ai-regenerate-btn");
+  if (regenBtn) {
+    regenBtn.onclick = (e) => { e.preventDefault(); triggerAiAnalysis(q, id, true); };
+  }
+  if (q.key === "offerings" && !r.doublecheck) {
+    triggerAiAnalysis(q, id, false);
+  }
   document.querySelector("#review-panel .panel-card").scrollTop = 0;
 }
 
@@ -1749,9 +1766,52 @@ function fieldDate(q, id, col, val) {
 function booleanSelect(q, id, col, currentAttr) {
   return `<select class="editable" data-queue="${q.key}" data-id="${id}" data-field="${col}">
     <option value="" ${currentAttr === "" ? "selected" : ""}>—</option>
-    <option value="true" ${currentAttr === "true" ? "selected" : ""}>Yes</option>
-    <option value="false" ${currentAttr === "false" ? "selected" : ""}>No</option>
+    <option value="true" ${currentAttr === "true" ? "selected" : ""}>True</option>
+    <option value="false" ${currentAttr === "false" ? "selected" : ""}>False</option>
   </select>`;
+}
+
+// ====================================================================
+// AI Doublecheck analysis
+// ====================================================================
+function renderAiAnalysis(r) {
+  if (r.doublecheck) {
+    return `<div class="ai-analysis-text">${escapeHtml(r.doublecheck)}</div>`;
+  }
+  return `<div class="ai-analysis-loading">No analysis yet. Click Regenerate or open this panel to auto-analyze.</div>`;
+}
+
+async function triggerAiAnalysis(q, id, force) {
+  const panel = document.getElementById("review-panel");
+  if (!panel.classList.contains("open") || panel.dataset.queue !== q.key || Number(panel.dataset.id) !== id) return;
+  const body = document.getElementById("ai-analysis-body");
+  if (!body) return;
+  body.innerHTML = `<div class="ai-analysis-loading">Analyzing — please keep this panel open. May take 30–60s…</div>`;
+  try {
+    const resp = await fetch("/api/ai-analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, force: !!force }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.status !== "success") {
+      const msg = (data.error && data.error.message) || "Unknown error";
+      body.innerHTML = `<div class="ai-analysis-error">Error: ${escapeHtml(msg)}</div>`;
+      return;
+    }
+    // Update the cached row data
+    const r = q.rows.get(id);
+    if (r) r.doublecheck = data.analysis;
+    body.innerHTML = `<div class="ai-analysis-text">${escapeHtml(data.analysis)}</div>`;
+    // Re-render the table row to show truncated analysis
+    const tr = document.querySelector(`#review-body tr[data-queue="${q.key}"][data-id="${id}"]`);
+    if (tr && r) {
+      tr.outerHTML = q.renderRow(r);
+      attachReviewHandlers();
+    }
+  } catch (e) {
+    body.innerHTML = `<div class="ai-analysis-error">Network error: ${escapeHtml(e.message)}</div>`;
+  }
 }
 
 // ====================================================================
@@ -1761,12 +1821,14 @@ OFFERINGS_QUEUE.renderTableHead = () => `
   <tr>
     <th>Ticker / Form</th>
     <th>Filed</th>
+    <th>Offering Type</th>
     <th>Period Ending</th>
     <th>Done</th>
     <th>Disclosure Type</th>
     <th>Headline</th>
     <th>Selling Shareholder</th>
     <th>Commentary</th>
+    <th>Doublecheck</th>
     <th class="num">Offering $</th>
     <th class="num">Share $</th>
     <th class="num">Conv $</th>
@@ -1795,12 +1857,14 @@ OFFERINGS_QUEUE.renderRow = function (r) {
         <div style="margin-top:4px;">${fieldText(q, id, "form_type", r.form_type, "text-short")}</div>
       </td>
       <td>${fmtDate(r.filed_at)}</td>
+      <td>${fieldText(q, id, "offering_type", r.offering_type, "text-short")}</td>
       <td>${fieldDate(q, id, "period_ending", r.period_ending)}</td>
       <td>${booleanSelect(q, id, "done", doneAttr)}</td>
       <td>${fieldText(q, id, "disclosure_type", r.disclosure_type, "text-short")}</td>
       <td>${fieldText(q, id, "headline", r.headline, "text-mid")}</td>
       <td>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details, "text-long")}</td>
       <td>${fieldTextarea(q, id, "commentary", r.commentary, "text-long")}</td>
+      <td class="ai-analysis-cell">${r.doublecheck ? `<span class="ai-truncated" title="${escapeHtml(r.doublecheck)}">${escapeHtml((r.doublecheck || "").substring(0, 80))}${(r.doublecheck || "").length > 80 ? "…" : ""}</span>` : '<span class="muted">—</span>'}</td>
       <td>${fieldNum(q, id, "offering_amount", r.offering_amount)}</td>
       <td>${fieldNum(q, id, "share_price", r.share_price)}</td>
       <td>${fieldNum(q, id, "conversion_price", r.conversion_price)}</td>
@@ -1855,12 +1919,22 @@ OFFERINGS_QUEUE.renderPanel = function (r) {
         <div>${fieldText(q, id, "headline", r.headline)}</div>
         <div class="label">Form Type</div>
         <div>${fieldText(q, id, "form_type", r.form_type)}</div>
+        <div class="label">Offering Type</div>
+        <div>${fieldText(q, id, "offering_type", r.offering_type)}</div>
         <div class="label">Disclosure Type</div>
         <div>${fieldText(q, id, "disclosure_type", r.disclosure_type)}</div>
         <div class="label">Selling Shareholder Details</div>
         <div>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details)}</div>
         <div class="label">Commentary</div>
         <div>${fieldTextarea(q, id, "commentary", r.commentary)}</div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <h4>AI Doublecheck
+        <a href="#" id="ai-regenerate-btn" class="status" style="font-size:11px;margin-left:8px;text-decoration:underline;">Regenerate</a>
+      </h4>
+      <div id="ai-analysis-body" class="ai-analysis-body">
+        ${renderAiAnalysis(r)}
       </div>
     </div>
     <div class="panel-section">

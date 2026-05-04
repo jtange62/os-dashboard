@@ -37,9 +37,18 @@ with CONFIG_PATH.open(encoding="utf-8") as _f:
     _CFG = json.load(_f)
 
 ASKEDGAR_KEY = _CFG["askedgar_api_key"]
+ANTHROPIC_KEY = _CFG.get("anthropic_api_key", "")
+ELASTIC_URL = (_CFG.get("elastic_url") or "").rstrip("/")
+ELASTIC_KEY = _CFG.get("elastic_api_key", "")
+ELASTIC_INDEX = _CFG.get("elastic_filings_index", "stock_filings")
 PORT = int(_CFG.get("port", 8766))
 
 ASKEDGAR_BASE = "https://eapi.askedgar.io"
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_MODEL = "claude-opus-4-7"
+
+# ~5000 tokens worth of filing text. 1 token ~= 4 chars for English prose.
+FILING_TEXT_MAX_CHARS = 20000
 
 DB_CONFIG = {
     **_CFG["postgres"],
@@ -68,7 +77,9 @@ EDITABLE_COLUMNS = {
     "potential_owners": "text",
     "bank": "text",
     "form_type": "text",
+    "offering_type": "text",
     "period_ending": "date",
+    "doublecheck": "text",
 }
 
 REVIEW_COLUMNS = """
@@ -91,7 +102,9 @@ REVIEW_COLUMNS = """
     potential_owners,
     bank,
     form_type,
+    offering_type,
     financing_activity,
+    doublecheck,
     updated_at
 """
 
@@ -272,6 +285,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._handle_warrants_update()
             elif url.path == "/api/warrants/create":
                 self._handle_warrants_create()
+            elif url.path == "/api/ai-analyze":
+                self._handle_ai_analyze()
             else:
                 self.send_error(404, "Not Found")
         except Exception as e:
@@ -604,6 +619,357 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             conn.commit()
         self._send_json(200, {"status": "success", "result": row})
 
+    # -------------------- AI analysis --------------------
+    def _handle_ai_analyze(self):
+        if not ANTHROPIC_KEY:
+            self._send_json(500, {"status": "error", "error": {"code": "no_anthropic_key", "message": "anthropic_api_key missing in config.json"}})
+            return
+        body = self._read_json_body()
+        row_id = body.get("id")
+        force = bool(body.get("force"))
+        if row_id is None or row_id == "":
+            self._send_json(400, {"status": "error", "error": {"code": "missing_pk", "message": "id required"}})
+            return
+        try:
+            row_id = int(row_id)
+        except (TypeError, ValueError):
+            self._send_json(400, {"status": "error", "error": {"code": "bad_id", "message": "id must be integer"}})
+            return
+
+        with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"SELECT {REVIEW_COLUMNS} FROM offering_data_new_final_clone WHERE id = %s",
+                (row_id,),
+            )
+            row = cur.fetchone()
+        if not row:
+            self._send_json(404, {"status": "error", "error": {"code": "not_found", "message": "row not found"}})
+            return
+        if row.get("doublecheck") and not force:
+            self._send_json(200, {"status": "success", "cached": True, "analysis": row["doublecheck"]})
+            return
+
+        ticker = (row.get("ticker") or "").upper()
+        if not ticker:
+            self._send_json(400, {"status": "error", "error": {"code": "no_ticker", "message": "row has no ticker"}})
+            return
+
+        try:
+            ctx = self._gather_ai_context(ticker, row)
+            analysis = self._call_anthropic(row, ctx)
+        except Exception as e:
+            self._send_json(502, {"status": "error", "error": {"code": "analyzer_failed", "message": str(e)}})
+            return
+
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE offering_data_new_final_clone SET doublecheck = %s, updated_at = NOW() WHERE id = %s",
+                (analysis, row_id),
+            )
+            conn.commit()
+        self._send_json(200, {"status": "success", "cached": False, "analysis": analysis})
+
+    @staticmethod
+    def _askedgar_get(path, params):
+        qs = urllib.parse.urlencode(params)
+        target = f"{ASKEDGAR_BASE}{path}?{qs}"
+        req = urllib.request.Request(target, headers={"API-KEY": ASKEDGAR_KEY})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+            enc = resp.headers.get("Content-Encoding")
+            if enc:
+                data = Handler._decode_body(data, enc)
+        return json.loads(data.decode("utf-8")) if data else {}
+
+    @staticmethod
+    def _extract_filing_url(askedgar_url):
+        """Extract the raw sec.gov or benzinga URL from an askedgar_url.
+        askedgar_url has two patterns:
+        - https://app.askedgar.io/filing?...&filingUrl=<encoded-sec.gov-url>
+        - https://www.benzinga.com/... (direct URL for news articles)
+        """
+        if not askedgar_url:
+            return None
+        u = askedgar_url.lower()
+        if "benzinga" in u:
+            return askedgar_url
+        parsed = urllib.parse.urlparse(askedgar_url)
+        qs = urllib.parse.parse_qs(parsed.query)
+        filing_urls = qs.get("filingUrl", [])
+        return filing_urls[0] if filing_urls else None
+
+    @staticmethod
+    def _get_filing_text(filing_url):
+        """Fetch source text from Elasticsearch for an SEC filing or news article."""
+        if not (ELASTIC_URL and ELASTIC_KEY):
+            return None
+        if not filing_url:
+            return None
+        u = (filing_url or "").lower()
+        if "benzinga" in u:
+            index = "news"
+            url_field = "url"
+            text_fields = ("body", "teaser")
+        else:
+            index = ELASTIC_INDEX
+            url_field = "linkToFilingDetails"
+            text_fields = ("textContent",)
+
+        body = json.dumps({
+            "query": {"term": {url_field: filing_url}},
+            "size": 1,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{ELASTIC_URL}/{index}/_search",
+            data=body,
+            headers={
+                "Authorization": f"ApiKey {ELASTIC_KEY}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        hits = ((data.get("hits") or {}).get("hits") or [])
+        if not hits:
+            return None
+        src = hits[0].get("_source") or {}
+        text = ""
+        for f in text_fields:
+            v = src.get(f)
+            if v:
+                text = v
+                break
+        if not text:
+            return None
+        if len(text) > FILING_TEXT_MAX_CHARS:
+            text = text[:FILING_TEXT_MAX_CHARS] + "\n\n[...truncated...]"
+        return text
+
+    def _gather_ai_context(self, ticker, row):
+        ctx = {}
+        # Filing text — extract the real filing URL from askedgar_url
+        filing_url = self._extract_filing_url(row.get("askedgar_url"))
+        if filing_url:
+            try:
+                txt = self._get_filing_text(filing_url)
+                if txt:
+                    ctx["filing_text"] = txt
+            except Exception as e:
+                ctx["filing_text_error"] = str(e)
+
+        # Recent offerings (5 most recent via AskEdgar advanced endpoint)
+        try:
+            off = self._askedgar_get("/v1/offerings-advanced", {"ticker": ticker, "limit": 5, "page": 1})
+            ctx["recent_offerings"] = (off or {}).get("results") or []
+        except Exception as e:
+            ctx["recent_offerings_error"] = str(e)
+
+        # Recent news & filings (5 most recent)
+        try:
+            news = self._askedgar_get("/v1/news-basic", {"ticker": ticker, "limit": 5, "page": 1})
+            ctx["recent_news"] = (news or {}).get("results") or []
+        except Exception as e:
+            ctx["recent_news_error"] = str(e)
+
+        return ctx
+
+    @staticmethod
+    def _call_anthropic(row, ctx):
+        sections = []
+
+        # --- Extracted data with field descriptions ---
+        sections.append("=== EXTRACTED DATA (the row being reviewed) ===")
+        sections.append("Field descriptions:")
+        sections.append("- ticker: the stock ticker this entry is recorded under")
+        sections.append("- headline: standardized category label for the financing event (see prompt rules)")
+        sections.append("- done: true/false — whether this row is verified and should be committed to the production financings table")
+        sections.append("- disclosure_type: indicates if this is a potentially new development and if the financing activity is the primary topic of the filing")
+        sections.append("- selling_shareholder_details: a summary of the financing activity")
+        sections.append("- commentary: commentary on whether the initial AI analysis indicated this is a duplicate of an existing entry")
+        sections.append("- offering_amount: dollar amount of the offering")
+        sections.append("- share_price: price per share")
+        sections.append("- conversion_price: conversion price for convertible instruments")
+        sections.append("- shares_amount: total shares sold/issued (includes pre-funded warrants)")
+        sections.append("- warrants_amount: total warrants in offering (excludes pre-funded warrants)")
+        sections.append("- warrants_exercise_price: exercise price per warrant")
+        sections.append("- bank: placement agent, sales agent, or underwriter")
+        sections.append("- potential_owners: named investors")
+        sections.append("- form_type: SEC form type (8-K, S-1, etc.)")
+        sections.append("- period_ending: period ending date if applicable")
+        sections.append("- filed_at: date the filing was made")
+        sections.append("")
+        row_clean = {k: v for k, v in row.items() if k not in ("doublecheck", "updated_at", "financing_activity")}
+        sections.append(json.dumps(row_clean, default=_json_default, indent=2))
+
+        # --- Filing text ---
+        if ctx.get("filing_text"):
+            sections.append("\n=== ORIGINAL FILING TEXT (the raw source document) ===")
+            sections.append(ctx["filing_text"])
+        elif ctx.get("filing_text_error"):
+            sections.append("\n=== ORIGINAL FILING TEXT ===")
+            sections.append(f"(failed to fetch: {ctx['filing_text_error']})")
+        else:
+            sections.append("\n=== ORIGINAL FILING TEXT ===")
+            sections.append("(not available — Elasticsearch not configured)")
+
+        # --- Historical data ---
+        sections.append("\n=== HISTORICAL DATA: 5 MOST RECENT OFFERINGS ===")
+        sections.append(json.dumps(ctx.get("recent_offerings", []), default=_json_default, indent=2))
+
+        sections.append("\n=== HISTORICAL DATA: 5 MOST RECENT NEWS & FILINGS ===")
+        sections.append(json.dumps(ctx.get("recent_news", []), default=_json_default, indent=2))
+
+        user_content = "\n".join(sections)
+
+        system_prompt = (
+            "You are a senior data quality analyst reviewing SEC filing data that has been extracted "
+            "by an AI and reviewed by a human data specialist. Your job is to double-check everything.\n\n"
+            "You will receive:\n"
+            "1. The ORIGINAL FILING TEXT (the raw source document)\n"
+            "2. The EXTRACTED DATA\n"
+            "3. HISTORICAL DATA (recent financings, filings and news)\n\n"
+            "You must verify TWO things:\n\n"
+            "## A) EXTRACTION ACCURACY\n"
+            "Check every extracted field against the original filing text using these rules.\n\n"
+            "**IMPORTANT**: Only flag issues that are materially wrong. Do NOT flag:\n"
+            "- Minor rounding differences (e.g., $0.65 vs $0.66)\n"
+            "- Trivially minor field discrepancies that don't change the meaning\n"
+            "- Edge cases where either interpretation is defensible\n"
+            "Focus on errors that would mislead someone reviewing the data.\n\n"
+            "### headline\n"
+            "Must use one of these exact headlines in CAPITAL LETTERS:\n\n"
+            "- `REGISTERED OFFERING (TYPE)` — TYPE is one of: UNDERWRITTEN, RDO, BEST EFFORTS, DEBT OFFERING, RIGHTS OFFERING. "
+            "'RDO' = registered direct offering. 'DEBT OFFERING' = notes/bonds. 'RIGHTS OFFERING' = company offers existing "
+            "shareholders right to buy more shares. If type unknown, just 'REGISTERED OFFERING'. **IMPORTANT**: MUST explicitly "
+            "reference a registration statement (S-1, S-3, F-1, F-3, F-10, or a File No. like '333-258326'). No registration "
+            "statement = use PRIVATE PLACEMENT instead. Over-allotment closings = OTHER, not REGISTERED OFFERING.\n"
+            "- `PRIVATE PLACEMENT (TYPE)` — TYPE is one of: EQUITY, CONVERTIBLE NOTE, CONVERTIBLE PREFERRED, NOTE, DESPAC. "
+            "'NOTE' = non-convertible debt. 'DESPAC' = done in conjunction with business combination/merger. If type unknown, "
+            "just 'PRIVATE PLACEMENT'. An unregistered offering where equity or debt securities are sold for immediate cash proceeds.\n"
+            "- `WARRANT EXERCISE` — Only when warrants are exercised for cash proceeds or cashless. Must specifically state warrants "
+            "were exercised and company receives cash (unless cashless). Simple issuance of warrants does NOT count.\n"
+            "- `NEW EQUITY LINE` — Also known as SPA, SEPA, ELOC, Standby Equity Purchase Agreement. Key traits: (1) single "
+            "institutional investor, (2) shares sold over a period of time at varying prices based on formula/market price, not all at once.\n"
+            "- `NEW ATM` — New at-the-market or controlled equity offering agreement, often via S-3/F-3, but no shares sold yet.\n"
+            "- `DEBT OFFERING` — Non-convertible bonds/notes.\n"
+            "- `LOAN` — Traditional bank loans.\n"
+            "- `CREDIT FACILITY` — New revolving credit lines. Do not include amendments unless they significantly increase borrowing capacity.\n"
+            "- `ASSET SALE` — Assets sold for cash.\n"
+            "- `SHARE ISSUANCE FOR ACQUISITION` — Shares issued to acquire companies/assets/services. Mark 'PENDING' if shares not yet issued. "
+            "Exclude mergers/reverse mergers.\n"
+            "- `FINANCIAL/SHAREHOLDER RESULTS` — Quarterly/annual reports or shareholder votes. If the filing ALSO discloses distinct new "
+            "financing activities, those should be separate entries with the specific financing headline appended with "
+            "', FINANCIAL/SHAREHOLDER RESULTS'. Only use alone if NO new financing activities.\n"
+            "- `IPO` — Initial Public Offerings.\n"
+            "- `DEBT CONVERSION` — Debt converted into equity.\n"
+            "- `ATM USED` — Sales/proceeds from an existing at-the-market (ATM), controlled equity, standby equity, or equity line of "
+            "credit (ELOC) agreement. This is NOT a new ATM setup (that's NEW ATM), but actual shares sold and proceeds received under "
+            "an existing agreement. The offering_amount represents the incremental amount not previously reported.\n"
+            "- `OTHER, [BRIEF DESCRIPTION]` — Anything not fitting above categories.\n\n"
+            "**PENDING rules**: Prepend 'PENDING' if (a) only plans/expectations without a confirmed transaction, or (b) a REGISTERED "
+            "OFFERING or PRIVATE PLACEMENT is missing key details (shares, price, amount). Do NOT prepend PENDING if the deal is "
+            "announced and committed but just hasn't officially closed yet.\n\n"
+            "### offering_type\n"
+            "- Only for REGISTERED OFFERING — the form type (S-1, S-3, F-1, F-3) from the registration statement reference\n"
+            "- null if not applicable\n\n"
+            "### offering_amount\n"
+            "- Dollar amount that has ACTUALLY CLOSED or been committed. NOT \"up to\" amounts\n"
+            "- Multi-tranche: only the closed tranche amount\n"
+            "- null if not applicable\n\n"
+            "### shares_amount\n"
+            "- Total shares sold/issued. INCLUDE pre-funded warrants (treat as shares)\n"
+            "- If not stated, should be calculated as offering_amount / share_price (or / conversion_price)\n"
+            "- null only if not stated AND cannot be calculated\n\n"
+            "### share_price\n"
+            "- Price per share in USD. Convert foreign currency\n"
+            "- **IMPORTANT**: If share_price would be null but conversion_price is populated, share_price is intentionally set to "
+            "the conversion_price value. Do NOT flag this as an error.\n"
+            "- null if not applicable and no conversion_price exists\n\n"
+            "### conversion_price\n"
+            "- For convertible notes/debt or preferred stock. Use fixed/floor price, NOT variable/formula prices\n"
+            "- null if not applicable\n\n"
+            "### warrants_amount\n"
+            "- Total warrants in offering. EXCLUDE pre-funded warrants\n"
+            "- If defined as percentage of shares, must be calculated\n"
+            "- null if none\n\n"
+            "### warrants_exercise_price\n"
+            "- Exercise price per warrant in USD. EXCLUDE pre-funded warrants\n"
+            "- null if not applicable\n\n"
+            "### bank\n"
+            "- Primary Placement Agent, Sales Agent, Book Running Manager, or Underwriter\n"
+            "- null if not specified\n\n"
+            "### potential_owners\n"
+            "- Named investors, comma-separated. Exclude generic \"institutional investors\"\n"
+            "- null if not specified\n\n"
+            "### selling_shareholder_details\n"
+            "- Should be 3-4 sentence summary with key numbers and dates\n\n"
+            "## B) TICKER ATTRIBUTION (especially for news/press releases)\n"
+            "- The Ticker field identifies which company this entry is recorded under\n"
+            "- For news articles that mention multiple companies, verify the financing activity ACTUALLY belongs to the assigned ticker\n"
+            "- If the article is about Company A's financing but the entry is recorded under Company B (who is only mentioned as a "
+            "peer/comparable), flag this as a ticker mismatch — this is a critical error\n\n"
+            "## C) DUPLICATE LABEL ACCURACY\n"
+            "The `commentary` field contains the duplicate label. Verify it against the historical entries:\n"
+            "- POTENTIAL DUPLICATE: headline + details are substantially similar to a historical entry\n"
+            "- NOT DUPLICATE: no historical entry is substantially similar\n"
+            "- N/A: no historical entries exist\n"
+            "- Both \"NOT DUPLICATE\" and \"N/A\" are acceptable when no historical entries exist. Do NOT flag this.\n"
+            "- Do NOT check duplicate labels for ATM USED headlines (these are frequent recurring entries and duplicates are expected).\n\n"
+            "## D) OTHER HEADLINE HANDLING\n"
+            "Filings with headline 'OTHER' (or 'OTHER, ...') should NOT be committed to the database (Done = False). "
+            "HOWEVER, if the filing indicates adjustments to outstanding warrants or convertibles — such as warrants exercised "
+            "or converted, amounts changed, conversion or exercise prices changed, etc. — then it still NEEDS ATTENTION. "
+            "While the offering data row itself won't be committed, existing warrant/convertible records in the database may "
+            "need to be updated. Flag this clearly in the Analysis.\n\n"
+            "Output in this format:\n\n"
+            "Done: True or False (if it should be committed to the main database)\n\n"
+            "Status: OK or 'NEEDS ATTENTION'\n\n"
+            "Analysis: short description of why its ok or needs attention\n\n"
+            "Corrected / Missing Values:\n\n"
+            "(in bullet format, list both corrected values AND any values that are present in the filing text but were "
+            "not extracted — e.g. a share price, bank, investor name, etc. that appears in the source but is null/missing "
+            "in the extracted data. Format:\n\n"
+            "- headline: REGISTERED OFFERING (corrected)\n"
+            "- shares_amount: XXX (corrected)\n"
+            "- bank: Goldman Sachs (missing — found in filing)\n"
+            "- potential_owners: Armistice Capital (missing — found in filing)\n\n"
+            "If no corrections or missing values, write: No corrections needed.)\n\n"
+            "Keep the whole output compact — this displays inside a small side panel."
+        )
+
+        payload = {
+            "model": ANTHROPIC_MODEL,
+            "max_tokens": 16000,
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "high"},
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_content}],
+        }
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            ANTHROPIC_URL,
+            data=body,
+            headers={
+                "x-api-key": ANTHROPIC_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                resp_data = resp.read()
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Anthropic HTTP {e.code}: {err_body}")
+        parsed = json.loads(resp_data.decode("utf-8"))
+        text_parts = []
+        for block in parsed.get("content") or []:
+            if block.get("type") == "text" and block.get("text"):
+                text_parts.append(block["text"])
+        return ("\n".join(text_parts)).strip() or "(no analysis returned)"
+
     @staticmethod
     def _coerce(raw, kind):
         if raw is None or raw == "":
@@ -695,7 +1061,23 @@ class ReusableTCPServer(socketserver.ThreadingTCPServer):
     daemon_threads = True
 
 
+def _ensure_columns():
+    """Add columns that may not exist yet (idempotent)."""
+    stmts = [
+        "ALTER TABLE offering_data_new_final_clone ADD COLUMN IF NOT EXISTS doublecheck TEXT",
+        "ALTER TABLE all_financings_final ADD COLUMN IF NOT EXISTS doublecheck TEXT",
+    ]
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            for s in stmts:
+                cur.execute(s)
+            conn.commit()
+    except Exception as e:
+        sys.stderr.write(f"[server] column migration note: {e}\n")
+
+
 def main():
+    _ensure_columns()
     with ReusableTCPServer(("127.0.0.1", PORT), Handler) as httpd:
         print(f"Offerings Dashboard running at http://localhost:{PORT}/")
         print("Press Ctrl+C to stop.")

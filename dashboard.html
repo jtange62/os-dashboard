@@ -556,6 +556,7 @@
     <div class="mode-toggle" style="display:inline-flex;gap:0;margin-bottom:14px;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
       <button type="button" class="mode-btn active" data-mode="date">Daily queue</button>
       <button type="button" class="mode-btn" data-mode="ticker">By ticker</button>
+      <button type="button" class="mode-btn" data-mode="lowfloat">Low float</button>
     </div>
 
     <form id="review-form-date" class="meta-row" style="margin-bottom:14px;">
@@ -576,6 +577,12 @@
       <button type="button" class="secondary" id="review-back-to-daily">← Back to daily queue</button>
       <span id="review-summary-ticker" class="status" style="margin-left:auto;"></span>
     </form>
+
+    <div id="review-form-lowfloat" class="meta-row" style="margin-bottom:14px;display:none;">
+      <button type="button" class="primary" id="review-lowfloat-refresh">Refresh</button>
+      <span style="color:var(--dim);font-size:0.85em;">Records where float_final or tradable_float_final &lt; 300k (limit 100, ordered by filed_at)</span>
+      <span id="review-summary-lowfloat" class="status" style="margin-left:auto;"></span>
+    </div>
 
     <div id="review-body"></div>
   </section>
@@ -1561,19 +1568,20 @@ function chicagoYesterdayISO() {
   return d.toISOString().slice(0, 10);
 }
 
-let reviewMode = "date"; // "date" | "ticker"
+let reviewMode = "date"; // "date" | "ticker" | "lowfloat"
 
 function setReviewMode(mode, opts = {}) {
   reviewMode = mode;
   document.querySelectorAll(".mode-btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
-  document.getElementById("review-form-date").style.display   = mode === "date"   ? "" : "none";
-  document.getElementById("review-form-ticker").style.display = mode === "ticker" ? "" : "none";
+  document.getElementById("review-form-date").style.display     = mode === "date"     ? "" : "none";
+  document.getElementById("review-form-ticker").style.display   = mode === "ticker"   ? "" : "none";
+  document.getElementById("review-form-lowfloat").style.display = mode === "lowfloat" ? "" : "none";
   // URL state
   const u = new URL(window.location);
   u.searchParams.set("rmode", mode);
   if (mode === "ticker" && opts.ticker) {
     u.searchParams.set("rt", opts.ticker.toUpperCase());
-  } else if (mode === "date") {
+  } else if (mode !== "ticker") {
     u.searchParams.delete("rt");
   }
   history.replaceState(null, "", u.pathname + u.search);
@@ -1590,6 +1598,7 @@ document.querySelectorAll(".mode-btn").forEach((b) => {
     if (b.dataset.mode === reviewMode) return;
     setReviewMode(b.dataset.mode);
     if (reviewMode === "date") loadReview();
+    else if (reviewMode === "lowfloat") loadReview();
     else if (document.getElementById("review-ticker").value) loadReview();
   });
 });
@@ -1604,6 +1613,9 @@ document.getElementById("review-form-ticker").addEventListener("submit", (e) => 
 });
 document.getElementById("review-back-to-daily").addEventListener("click", () => {
   setReviewMode("date");
+  loadReview();
+});
+document.getElementById("review-lowfloat-refresh").addEventListener("click", () => {
   loadReview();
 });
 document.getElementById("review-today").addEventListener("click", () => {
@@ -1625,6 +1637,9 @@ async function loadReview() {
 
   if (reviewMode === "ticker") {
     return loadReviewByTicker();
+  }
+  if (reviewMode === "lowfloat") {
+    return loadReviewByLowFloat();
   }
   return loadReviewByDate();
 }
@@ -1664,6 +1679,24 @@ async function loadReviewByDate() {
 
   summary.innerHTML = `<strong>${main.count}</strong> matching · <strong>${pinnedRows.length}</strong> pinned (filter changed) · filed_at <strong>${main.filed_at}</strong>`;
   renderReviewTable(all);
+}
+
+async function loadReviewByLowFloat() {
+  const summary = document.getElementById("review-summary-lowfloat");
+  summary.textContent = "";
+  let data;
+  try {
+    data = await fetch("/api/review?mode=lowfloat").then((r) => r.json());
+    if (data.status !== "success") throw new Error(data?.error?.message || "low-float query failed");
+  } catch (e) {
+    setError("review-body", `Failed to load low-float records: ${e.message}`);
+    return;
+  }
+  reviewRowsByUrl = new Map(data.results.map((r) => [r.document_url, r]));
+  dirtyByUrl = new Map();
+  staleUrls = new Set();
+  summary.innerHTML = `<strong>${data.count}</strong> records with float &lt; 300k`;
+  renderReviewTable(data.results);
 }
 
 async function loadReviewByTicker() {
@@ -2282,13 +2315,16 @@ document.getElementById("search-form").addEventListener("submit", (e) => {
 const params = new URLSearchParams(window.location.search);
 const initialTab = params.get("tab");
 // Restore review queue mode/state from URL.
-const initialMode = params.get("rmode") === "ticker" ? "ticker" : "date";
+const rmodeParam = params.get("rmode");
+const initialMode = rmodeParam === "ticker" ? "ticker" : rmodeParam === "lowfloat" ? "lowfloat" : "date";
 const initialReviewTicker = (params.get("rt") || "").toUpperCase();
 if (initialMode === "ticker") {
   if (initialReviewTicker) {
     document.getElementById("review-ticker").value = initialReviewTicker;
   }
   setReviewMode("ticker");
+} else if (initialMode === "lowfloat") {
+  setReviewMode("lowfloat");
 } else {
   setReviewMode("date");
 }

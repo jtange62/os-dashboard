@@ -115,9 +115,15 @@ REVIEW_COLUMNS = """
     hf.updated_at
 """
 
+EXCHANGE_JOIN = """
+    INNER JOIN screener s ON s.ticker = hf.ticker
+        AND s.exchange IN ('NASDAQ', 'NYSE', 'AMEX')
+"""
+
 REVIEW_QUERY = f"""
     SELECT {REVIEW_COLUMNS}
     FROM historical_float_final hf
+    {EXCHANGE_JOIN}
     WHERE
         hf.form_type NOT LIKE '%%MANUAL%%'
         AND hf.filed_at = %(filed_at)s
@@ -132,9 +138,22 @@ REVIEW_QUERY = f"""
 REVIEW_BY_TICKER_QUERY = f"""
     SELECT {REVIEW_COLUMNS}
     FROM historical_float_final hf
+    {EXCHANGE_JOIN}
     WHERE hf.ticker = %(ticker)s
     ORDER BY hf.date_final DESC NULLS LAST, hf.filed_at DESC NULLS LAST
     LIMIT 1000
+"""
+
+# Low-float mode: records where float_final or tradable_float_final < 300k
+REVIEW_LOW_FLOAT_QUERY = f"""
+    SELECT {REVIEW_COLUMNS}
+    FROM historical_float_final hf
+    {EXCHANGE_JOIN}
+    WHERE (hf.float_final < 300000 OR hf.tradable_float_final < 300000)
+        AND hf.float_final IS NOT NULL
+        AND hf.ticker IS NOT NULL
+    ORDER BY hf.filed_at DESC NULLS LAST
+    LIMIT 100
 """
 
 
@@ -246,7 +265,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self._send_json(200, {"status": "success", "count": len(mapping), "results": mapping})
 
     def _handle_review(self, params):
+        mode = (params.get("mode", [""])[0] or "").strip()
         ticker = (params.get("ticker", [""])[0] or "").strip().upper()
+
+        if mode == "lowfloat":
+            with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(REVIEW_LOW_FLOAT_QUERY)
+                rows = cur.fetchall()
+            self._send_json(
+                200,
+                {
+                    "status": "success",
+                    "mode": "lowfloat",
+                    "count": len(rows),
+                    "results": rows,
+                },
+            )
+            return
 
         if ticker:
             with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
@@ -600,15 +635,36 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "Check recent offerings + news for share issuances that should have been counted as restricted.\n"
             "- A big drop in OS or float vs the previous historical record may be normal if a reverse split happened around that date. "
             "Confirm by checking the most recent reverse split.\n"
+            "- CRITICAL split logic: compare the row's date_final (the 'as of' / reported date) to the split's execution_date. "
+            "If date_final is BEFORE the split execution_date, ALL share counts on this row MUST be pre-split values. "
+            "If any field (affiliate_shares, insider_shares, five_percent_shareholders, outstanding_shares, etc.) appears to be "
+            "post-split while date_final is pre-split, give a clear directive: 'Analyst should multiply [field] by [split_from/split_to] "
+            "to convert back to pre-split values.' Do NOT present this as optional or offer the reverse alternative. "
+            "The rule is absolute: date_final before split -> all values must be pre-split. "
+            "Only if date_final is AFTER the split execution_date should the numbers reflect post-split values.\n"
             "- For split-affected rows: verify the split actually occurred. Post-split price should usually be > $1, "
             "and recent news should mention the effective date.\n"
             "- If outstanding_final is very low, check whether outstanding_shares (raw) and outstanding_shares_reported diverge sharply, "
             "or whether the AI may have extracted the wrong number from the source filing -- the FILING TEXT will tell you.\n"
             "- Most important red flags: OS or float < 500k (especially < 100k or negative). "
             "Negatives are almost always wrong, unless the company is a brand-new SPAC or similar.\n\n"
-            "Output: 4-8 sentences, plain text, no markdown headers. Start with a clear verdict: "
-            "'Values look normal' OR 'Possible issue:' followed by the most likely cause(s) and what the analyst should check. "
-            "Be concise -- this displays inside a small side panel."
+            "=== OUTPUT FORMAT (follow exactly) ===\n"
+            "Use this exact structure with plain text (no markdown headers, no bold):\n\n"
+            "TIER: <one of the following>\n"
+            "  CRITICAL - negative float/tradable_float, or float < 200k\n"
+            "  DISCREPANCY - 30%+ change from previous record not explained by a split\n"
+            "  MINOR - small discrepancy under ~20%, or cosmetic issue\n"
+            "  NO CHANGE NECESSARY - values look correct\n\n"
+            "EXPLANATION: 2-4 sentences explaining the issue (or confirming values are fine). Be concise.\n\n"
+            "RECOMMENDED CHANGES:\n"
+            "If changes are needed, list each field that should change as a bullet:\n"
+            "- outstanding_shares / outstanding_shares_reported: <value>\n"
+            "- affiliate_shares: <value>\n"
+            "- restricted_shares: <value>\n"
+            "- float: <value>\n"
+            "(only list fields that need changing)\n"
+            "If no changes are needed, write: No changes recommended.\n\n"
+            "Keep the whole output compact -- this displays inside a small side panel."
         )
 
         payload = {
