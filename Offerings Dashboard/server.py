@@ -937,6 +937,37 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             ctx["recent_news_error"] = str(e)
 
+        # Staging table rows (not yet committed to production)
+        # Covers the ~24h gap between insert and commit.
+        # Skipped on Mondays — weekend commit catches up so no gap exists.
+        today = datetime.datetime.now(CHICAGO).date()
+        if today.weekday() != 0:  # 0 = Monday
+            row_id = row.get("id")
+            yesterday = today - datetime.timedelta(days=1)
+            try:
+                with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute(
+                        "SELECT id, headline, filed_at, selling_shareholder_details, "
+                        "       shares_amount, share_price, warrants_amount, "
+                        "       warrants_exercise_price, conversion_price, "
+                        "       offering_amount, bank, potential_owners "
+                        "FROM offering_data_new_final_clone c "
+                        "WHERE c.ticker = %s "
+                        "  AND c.id != %s "
+                        "  AND c.filed_at >= %s "
+                        "  AND c.financing_activity = TRUE "
+                        "  AND c.commentary IS NOT NULL "
+                        "  AND NOT EXISTS ("
+                        "      SELECT 1 FROM all_financings_final a "
+                        "      WHERE a.document_url = c.document_url"
+                        "  ) "
+                        "ORDER BY c.filed_at DESC LIMIT 10",
+                        (ticker, row_id, yesterday),
+                    )
+                    ctx["staging_rows"] = cur.fetchall()
+            except Exception as e:
+                ctx["staging_rows_error"] = str(e)
+
         return ctx
 
     @staticmethod
@@ -950,7 +981,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         sections.append("- headline: standardized category label for the financing event (see prompt rules)")
         sections.append("- done: true/false — whether this row is verified and should be committed to the production financings table")
         sections.append("- disclosure_type: indicates if this is a potentially new development and if the financing activity is the primary topic of the filing")
-        sections.append("- selling_shareholder_details: a summary of the financing activity")
+        sections.append("- selling_shareholder_details: despite the name, this is NOT about who is selling — it is a 3-4 sentence summary of the financing activity described in the filing")
         sections.append("- commentary: commentary on whether the initial AI analysis indicated this is a duplicate of an existing entry")
         sections.append("- offering_amount: dollar amount of the offering")
         sections.append("- share_price: price per share")
@@ -980,10 +1011,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         # --- Historical data ---
         sections.append("\n=== HISTORICAL DATA: 5 MOST RECENT OFFERINGS ===")
+        sections.append("(Note: the `selling_shareholder_details` field in these entries is a summary of the financing activity, not information about who is selling.)")
         sections.append(json.dumps(ctx.get("recent_offerings", []), default=_json_default, indent=2))
 
         sections.append("\n=== HISTORICAL DATA: 5 MOST RECENT NEWS & FILINGS ===")
         sections.append(json.dumps(ctx.get("recent_news", []), default=_json_default, indent=2))
+
+        # --- Staging rows (not yet committed to production) ---
+        staging = ctx.get("staging_rows", [])
+        if staging:
+            sections.append("\n=== STAGING ROWS (pending commit — not yet in production) ===")
+            sections.append(
+                "(These rows are in the review/staging table and have not yet been committed to the "
+                "production financings table. They cover the ~24h gap before commit. Use them for "
+                "duplicate detection just like historical entries. The `selling_shareholder_details` "
+                "field is a summary of the financing activity, not information about who is selling.)"
+            )
+            sections.append(json.dumps(staging, default=_json_default, indent=2))
 
         user_content = "\n".join(sections)
 
@@ -993,7 +1037,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "You will receive:\n"
             "1. The ORIGINAL FILING TEXT (the raw source document)\n"
             "2. The EXTRACTED DATA\n"
-            "3. HISTORICAL DATA (recent financings, filings and news)\n\n"
+            "3. HISTORICAL DATA (recent financings, filings and news)\n"
+            "4. STAGING ROWS (if any) — recently processed rows not yet committed to production; "
+            "treat these the same as historical entries for duplicate detection\n\n"
             "You must verify TWO things:\n\n"
             "## A) EXTRACTION ACCURACY\n"
             "Check every extracted field against the original filing text using these rules.\n\n"
@@ -1068,6 +1114,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "- Named investors, comma-separated. Exclude generic \"institutional investors\"\n"
             "- null if not specified\n\n"
             "### selling_shareholder_details\n"
+            "- Despite the column name, this is NOT about who is selling — it is a summary of the financing activity\n"
             "- Should be 3-4 sentence summary with key numbers and dates\n\n"
             "## B) TICKER ATTRIBUTION (especially for news/press releases)\n"
             "- The Ticker field identifies which company this entry is recorded under\n"
