@@ -992,7 +992,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         sections.append("- bank: placement agent, sales agent, or underwriter")
         sections.append("- potential_owners: named investors")
         sections.append("- form_type: SEC form type (8-K, S-1, etc.)")
-        sections.append("- period_ending: period ending date if applicable")
+        sections.append("- period_ending: only used for ATM USED rows — indicates the period when the ATM was actually used, NOT the filing date. ATM usage is often reported late (e.g. in a quarterly filing months later), so period_ending can be much earlier than filed_at. Do NOT flag a mismatch between period_ending and filed_at.")
         sections.append("- filed_at: date the filing was made")
         sections.append("")
         row_clean = {k: v for k, v in row.items() if k not in ("doublecheck", "updated_at", "financing_activity")}
@@ -1087,6 +1087,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "### offering_type\n"
             "- Only for REGISTERED OFFERING — the form type (S-1, S-3, F-1, F-3) from the registration statement reference\n"
             "- null if not applicable\n\n"
+            "### period_ending\n"
+            "- Only used for ATM USED rows. Indicates the period when the ATM was actually used, NOT the filing date.\n"
+            "- ATM usage is often reported late (e.g. in a quarterly/annual filing months after the sales occurred), "
+            "so period_ending can be much earlier than filed_at. Do NOT flag this as an error.\n"
+            "- null for all non-ATM USED headlines\n\n"
             "### offering_amount\n"
             "- Dollar amount that has ACTUALLY CLOSED or been committed. NOT \"up to\" amounts\n"
             "- Multi-tranche: only the closed tranche amount\n"
