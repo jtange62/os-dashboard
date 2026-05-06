@@ -1960,6 +1960,31 @@ function renderReviewPanel(q, r) {
   if (q.key === "offerings" && !r.doublecheck) {
     triggerAiAnalysis(q, id, false);
   }
+  // Fetch recent offerings for the panel
+  if (q.key === "offerings" && r.ticker) {
+    const roEl = document.getElementById("panel-recent-offerings");
+    if (roEl) {
+      fetch(`/api/offerings-advanced?ticker=${encodeURIComponent(r.ticker)}&limit=3&page=1`)
+        .then(res => res.json())
+        .then(data => {
+          const rows = (data.results || []);
+          if (!rows.length) { roEl.textContent = "No recent offerings found."; return; }
+          roEl.innerHTML = `<table style="width:100%;font-size:12px;border-collapse:collapse;">
+            <thead><tr style="text-align:left;border-bottom:1px solid var(--border);">
+              <th style="padding:2px 4px;">Filed</th><th style="padding:2px 4px;">Headline</th>
+              <th style="padding:2px 4px;">Shares</th><th style="padding:2px 4px;">Price</th>
+              <th style="padding:2px 4px;">Amount</th></tr></thead>
+            <tbody>${rows.map(o => `<tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:2px 4px;white-space:nowrap;">${fmtDate(o.filed_at)}</td>
+              <td style="padding:2px 4px;">${escapeHtml(o.headline || "—")}</td>
+              <td style="padding:2px 4px;text-align:right;">${o.shares_amount != null ? Number(o.shares_amount).toLocaleString() : "—"}</td>
+              <td style="padding:2px 4px;text-align:right;">${o.share_price != null ? "$" + Number(o.share_price).toFixed(2) : "—"}</td>
+              <td style="padding:2px 4px;text-align:right;">${o.offering_amount != null ? "$" + Number(o.offering_amount).toLocaleString() : "—"}</td>
+            </tr>`).join("")}</tbody></table>`;
+        })
+        .catch(() => { roEl.textContent = "Failed to load."; });
+    }
+  }
   document.querySelector("#review-panel .panel-card").scrollTop = 0;
 }
 
@@ -2176,6 +2201,10 @@ OFFERINGS_QUEUE.renderPanel = function (r) {
         <div class="label">Commentary</div>
         <div>${fieldTextarea(q, id, "commentary", r.commentary)}</div>
       </div>
+    </div>
+    <div class="panel-section">
+      <h4>Recent Offerings (Production)</h4>
+      <div id="panel-recent-offerings" class="muted" style="font-size:12px;">Loading…</div>
     </div>
     <div class="panel-section">
       <h4>AI Doublecheck
