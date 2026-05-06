@@ -405,6 +405,7 @@
   .ai-analysis-error { color: #e74c3c; font-size: 12px; }
   .ai-analysis-cell { max-width: 160px; }
   .ai-truncated { font-size: 11px; color: var(--muted); cursor: help; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ai-flag { color: #e74c3c; font-weight: 600; }
 
   .close-btn {
     background: transparent;
@@ -2165,7 +2166,7 @@ OFFERINGS_QUEUE.renderRow = function (r) {
       <td>${fieldText(q, id, "headline", r.headline, "text-mid")}</td>
       <td>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details, "text-long")}</td>
       <td>${fieldTextarea(q, id, "commentary", r.commentary, "text-long")}</td>
-      <td class="ai-analysis-cell">${r.doublecheck ? `<span class="ai-truncated" title="${escapeHtml(r.doublecheck)}">${escapeHtml((r.doublecheck || "").substring(0, 80))}${(r.doublecheck || "").length > 80 ? "…" : ""}</span>` : '<span class="muted">—</span>'}</td>
+      <td class="ai-analysis-cell">${r.doublecheck ? (() => { const dc = r.doublecheck; const flag = /Done:\s*True/i.test(dc) && /NEEDS ATTENTION/i.test(dc); return `<span class="ai-truncated${flag ? " ai-flag" : ""}" title="${escapeHtml(dc)}">${escapeHtml(dc.substring(0, 80))}${dc.length > 80 ? "…" : ""}</span>`; })() : '<span class="muted">—</span>'}</td>
       <td>${fieldNum(q, id, "offering_amount", r.offering_amount)}</td>
       <td>${fieldNum(q, id, "share_price", r.share_price)}</td>
       <td>${fieldNum(q, id, "conversion_price", r.conversion_price)}</td>
@@ -2201,12 +2202,6 @@ OFFERINGS_QUEUE.renderPanel = function (r) {
         <div>${fieldDate(q, id, "filed_at", r.filed_at)}</div>
         <div class="label">Period Ending</div>
         <div>${fieldDate(q, id, "period_ending", r.period_ending)}</div>
-        <div class="label">Financing activity</div>
-        <div class="value">${r.financing_activity === true ? '<span class="badge done">Yes</span>' : r.financing_activity === false ? '<span class="badge ins">No</span>' : "—"}</div>
-        <div class="label">Last DB update</div>
-        <div class="value">${fmtDateTime(r.updated_at)}</div>
-        <div class="label">Row ID</div>
-        <div class="value">${id}</div>
       </div>
     </div>
     <div class="panel-section">
@@ -2354,16 +2349,8 @@ WARRANTS_QUEUE.renderPanel = function (r) {
       <div class="panel-fields">
         <div class="label">Filing</div>
         <div class="value">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open AskEdgar</a>` : "—"}</div>
-        <div class="label">Document URL</div>
-        <div>${fieldText(q, id, "document_url", r.document_url)}</div>
         <div class="label">Filed at</div>
         <div>${fieldDate(q, id, "filed_at", r.filed_at)}</div>
-        <div class="label">File No.</div>
-        <div>${fieldText(q, id, "file_no", r.file_no)}</div>
-        <div class="label">Last DB update</div>
-        <div class="value">${fmtDateTime(r.updated_at)}</div>
-        <div class="label">Row ID</div>
-        <div class="value">${id}</div>
       </div>
     </div>
     <div class="panel-section">
