@@ -2358,77 +2358,82 @@ WARRANTS_QUEUE.renderPanel = function (r) {
   const q = WARRANTS_QUEUE;
   const id = Number(r.id);
   const verifiedAttr = r.verified === true ? "true" : r.verified === false ? "false" : "";
-  document.getElementById("review-panel").classList.remove("panel-wide");
+  document.getElementById("review-panel").classList.add("panel-wide");
   document.getElementById("panel-title").innerHTML =
     `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`;
   document.getElementById("panel-subtitle").textContent = `Filed ${fmtDate(r.filed_at)} · id ${id}`;
   document.getElementById("panel-content").innerHTML = `
-    <div class="panel-section">
-      <h4>Source</h4>
-      <div class="panel-fields">
-        <div class="label">Filing</div>
-        <div class="value">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open AskEdgar</a>` : "—"}</div>
-        <div class="label">Filed at</div>
-        <div>${fieldDate(q, id, "filed_at", r.filed_at)}</div>
+    <div class="panel-two-col">
+      <div class="panel-col">
+        <div class="panel-section">
+          <h4>Warrants</h4>
+          <div class="panel-fields">
+            <div class="label">Warrants Amount</div><div>${fieldNum(q, id, "warrants_amount", r.warrants_amount)}</div>
+            <div class="label">Warrants Remaining</div><div>${fieldNum(q, id, "warrants_remaining", r.warrants_remaining)}</div>
+            <div class="label">Exercise Price ($)</div><div>${fieldNum(q, id, "warrants_exercise_price", r.warrants_exercise_price)}</div>
+            <div class="label">Pre-funded Cost ($)</div><div>${fieldNum(q, id, "prefunded_cost", r.prefunded_cost)}</div>
+            <div class="label">Exercisable Date</div><div>${fieldDate(q, id, "exercisable_date", r.exercisable_date)}</div>
+            <div class="label">Expiration Date</div><div>${fieldDate(q, id, "expiration_date", r.expiration_date)}</div>
+          </div>
+        </div>
+        <div class="panel-section">
+          <h4>Convertibles</h4>
+          <div class="panel-fields">
+            <div class="label">Conversion Price ($)</div><div>${fieldNum(q, id, "conversion_price", r.conversion_price)}</div>
+            <div class="label">Offering Amount ($)</div><div>${fieldNum(q, id, "offering_amount", r.offering_amount)}</div>
+            <div class="label">Convertible Debt Remaining</div><div>${fieldNum(q, id, "convertible_debt_remaining", r.convertible_debt_remaining)}</div>
+            <div class="label">Convertible Date</div><div>${fieldDate(q, id, "convertible_date", r.convertible_date)}</div>
+            <div class="label">Maturity Date</div><div>${fieldDate(q, id, "maturity_date", r.maturity_date)}</div>
+          </div>
+        </div>
+        <div class="panel-section">
+          <h4>Parties &amp; Protection</h4>
+          <div class="panel-fields">
+            <div class="label">Owners</div><div>${fieldText(q, id, "owners", r.owners)}</div>
+            <div class="label">Owners 2</div><div>${fieldText(q, id, "owners_two", r.owners_two)}</div>
+            <div class="label">Bank</div><div>${fieldText(q, id, "bank", r.bank)}</div>
+            <div class="label">Price Protection</div><div>${fieldText(q, id, "price_protection", r.price_protection)}</div>
+            <div class="label">PP Clause</div><div>${fieldTextarea(q, id, "pp_clause", r.pp_clause)}</div>
+          </div>
+        </div>
       </div>
-    </div>
-    <div class="panel-section">
-      <h4>Key Details</h4>
-      <div class="panel-fields">
-        <div class="label">Verified</div>
-        <div>${booleanSelect(q, id, "verified", verifiedAttr)}</div>
-        <div class="label">Summary</div>
-        <div>${fieldText(q, id, "summary", r.summary)}</div>
-        <div class="label">Ticker</div>
-        <div>${fieldText(q, id, "ticker", r.ticker)}</div>
-        <div class="label">Details</div>
-        <div>${fieldText(q, id, "details", r.details)}</div>
-        <div class="label">Form Type</div>
-        <div>${fieldText(q, id, "form_type", r.form_type)}</div>
-        <div class="label">Selling Shareholder Details</div>
-        <div>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details)}</div>
-        <div class="label">Owners 2</div>
-        <div>${fieldTextarea(q, id, "owners_two", r.owners_two)}</div>
-        <div class="label">Registered</div>
-        <div>${fieldText(q, id, "registered", r.registered)}</div>
+      <div class="panel-col">
+        <div class="panel-section">
+          <h4>Key Details</h4>
+          <div class="panel-fields">
+            <div class="label">Verified</div>
+            <div>${booleanSelect(q, id, "verified", verifiedAttr)}</div>
+            <div class="label">Summary</div>
+            <div>${fieldText(q, id, "summary", r.summary)}</div>
+            <div class="label">Ticker</div>
+            <div>${fieldText(q, id, "ticker", r.ticker)}</div>
+            <div class="label">Details</div>
+            <div>${fieldText(q, id, "details", r.details)}</div>
+            <div class="label">Form Type</div>
+            <div>${fieldText(q, id, "form_type", r.form_type)}</div>
+            <div class="label">Selling Shareholder Details</div>
+            <div>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details)}</div>
+            <div class="label">Owners 2</div>
+            <div>${fieldTextarea(q, id, "owners_two", r.owners_two)}</div>
+            <div class="label">Registered</div>
+            <div>${fieldText(q, id, "registered", r.registered)}</div>
+          </div>
+        </div>
+        <div class="panel-section">
+          <h4>Recent Dilution Data</h4>
+          <div id="panel-recent-dilution" class="muted" style="font-size:12px;">Loading…</div>
+        </div>
+        <div class="panel-section">
+          <h4>Source</h4>
+          <div class="panel-fields">
+            <div class="label">Filing</div>
+            <div class="value">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open AskEdgar</a>` : "—"}</div>
+            <div class="label">Filed at</div>
+            <div>${fieldDate(q, id, "filed_at", r.filed_at)}</div>
+          </div>
+        </div>
       </div>
-    </div>
-    <div class="panel-section">
-      <h4>Recent Dilution Data</h4>
-      <div id="panel-recent-dilution" class="muted" style="font-size:12px;">Loading…</div>
-    </div>
-    <div class="panel-section">
-      <h4>Warrants</h4>
-      <div class="panel-fields">
-        <div class="label">Warrants Amount</div><div>${fieldNum(q, id, "warrants_amount", r.warrants_amount)}</div>
-        <div class="label">Warrants Remaining</div><div>${fieldNum(q, id, "warrants_remaining", r.warrants_remaining)}</div>
-        <div class="label">Exercise Price ($)</div><div>${fieldNum(q, id, "warrants_exercise_price", r.warrants_exercise_price)}</div>
-        <div class="label">Pre-funded Cost ($)</div><div>${fieldNum(q, id, "prefunded_cost", r.prefunded_cost)}</div>
-        <div class="label">Exercisable Date</div><div>${fieldDate(q, id, "exercisable_date", r.exercisable_date)}</div>
-        <div class="label">Expiration Date</div><div>${fieldDate(q, id, "expiration_date", r.expiration_date)}</div>
-      </div>
-    </div>
-    <div class="panel-section">
-      <h4>Convertibles</h4>
-      <div class="panel-fields">
-        <div class="label">Conversion Price ($)</div><div>${fieldNum(q, id, "conversion_price", r.conversion_price)}</div>
-        <div class="label">Offering Amount ($)</div><div>${fieldNum(q, id, "offering_amount", r.offering_amount)}</div>
-        <div class="label">Convertible Debt Remaining</div><div>${fieldNum(q, id, "convertible_debt_remaining", r.convertible_debt_remaining)}</div>
-        <div class="label">Convertible Date</div><div>${fieldDate(q, id, "convertible_date", r.convertible_date)}</div>
-        <div class="label">Maturity Date</div><div>${fieldDate(q, id, "maturity_date", r.maturity_date)}</div>
-      </div>
-    </div>
-    <div class="panel-section">
-      <h4>Parties &amp; Protection</h4>
-      <div class="panel-fields">
-        <div class="label">Owners</div><div>${fieldText(q, id, "owners", r.owners)}</div>
-        <div class="label">Owners 2</div><div>${fieldText(q, id, "owners_two", r.owners_two)}</div>
-        <div class="label">Bank</div><div>${fieldText(q, id, "bank", r.bank)}</div>
-        <div class="label">Price Protection</div><div>${fieldText(q, id, "price_protection", r.price_protection)}</div>
-        <div class="label">PP Clause</div><div>${fieldTextarea(q, id, "pp_clause", r.pp_clause)}</div>
-      </div>
-    </div>
-    `;
+    </div>`;
 };
 
 // ---------------- keybinds (review + news panels) ----------------
