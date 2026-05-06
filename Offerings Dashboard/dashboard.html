@@ -330,6 +330,17 @@
     padding: 0;
     box-shadow: -8px 0 24px rgba(0,0,0,0.4);
   }
+  .panel-wide .panel-card { width: 1200px; }
+  .panel-two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+  }
+  .panel-two-col > .panel-col {
+    min-width: 0;
+    border-right: 1px solid var(--border);
+  }
+  .panel-two-col > .panel-col:last-child { border-right: none; }
   .panel-header {
     position: sticky; top: 0;
     background: var(--panel);
@@ -1925,7 +1936,7 @@ function openReviewPanel(q, id) {
 
 function closeReviewPanel() {
   const panel = document.getElementById("review-panel");
-  panel.classList.remove("open");
+  panel.classList.remove("open", "panel-wide");
   panel.removeAttribute("data-id");
   panel.removeAttribute("data-queue");
   panel.setAttribute("aria-hidden", "true");
@@ -2189,70 +2200,77 @@ OFFERINGS_QUEUE.renderPanel = function (r) {
   const q = OFFERINGS_QUEUE;
   const id = Number(r.id);
   const doneAttr = r.done === true ? "true" : r.done === false ? "false" : "";
+  document.getElementById("review-panel").classList.add("panel-wide");
   document.getElementById("panel-title").innerHTML =
     `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`;
   document.getElementById("panel-subtitle").textContent = `Filed ${fmtDate(r.filed_at)} · id ${id}`;
   document.getElementById("panel-content").innerHTML = `
-    <div class="panel-section">
-      <h4>Source</h4>
-      <div class="panel-fields">
-        <div class="label">Filing</div>
-        <div class="value">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open AskEdgar</a>` : "—"}</div>
-        <div class="label">Filed at</div>
-        <div>${fieldDate(q, id, "filed_at", r.filed_at)}</div>
-        <div class="label">Period Ending</div>
-        <div>${fieldDate(q, id, "period_ending", r.period_ending)}</div>
+    <div class="panel-two-col">
+      <div class="panel-col">
+        <div class="panel-section">
+          <h4>Numbers</h4>
+          <div class="panel-fields">
+            <div class="label">Offering Amount ($)</div><div>${fieldNum(q, id, "offering_amount", r.offering_amount)}</div>
+            <div class="label">Share Price ($)</div><div>${fieldNum(q, id, "share_price", r.share_price)}</div>
+            <div class="label">Conversion Price ($)</div><div>${fieldNum(q, id, "conversion_price", r.conversion_price)}</div>
+            <div class="label">Shares Amount</div><div>${fieldNum(q, id, "shares_amount", r.shares_amount)}</div>
+            <div class="label">Warrants Amount</div><div>${fieldNum(q, id, "warrants_amount", r.warrants_amount)}</div>
+            <div class="label">Warrant Exercise ($)</div><div>${fieldNum(q, id, "warrants_exercise_price", r.warrants_exercise_price)}</div>
+          </div>
+        </div>
+        <div class="panel-section">
+          <h4>Parties</h4>
+          <div class="panel-fields">
+            <div class="label">Bank</div><div>${fieldText(q, id, "bank", r.bank)}</div>
+            <div class="label">Potential Owners</div><div>${fieldText(q, id, "potential_owners", r.potential_owners)}</div>
+          </div>
+        </div>
+        <div class="panel-section">
+          <h4>Source</h4>
+          <div class="panel-fields">
+            <div class="label">Filing</div>
+            <div class="value">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener">Open AskEdgar</a>` : "—"}</div>
+            <div class="label">Filed at</div>
+            <div>${fieldDate(q, id, "filed_at", r.filed_at)}</div>
+            <div class="label">Period Ending</div>
+            <div>${fieldDate(q, id, "period_ending", r.period_ending)}</div>
+          </div>
+        </div>
       </div>
-    </div>
-    <div class="panel-section">
-      <h4>Key Details</h4>
-      <div class="panel-fields">
-        <div class="label">Done</div>
-        <div>${booleanSelect(q, id, "done", doneAttr)}</div>
-        <div class="label">Ticker</div>
-        <div>${fieldText(q, id, "ticker", r.ticker)}</div>
-        <div class="label">Headline</div>
-        <div>${fieldText(q, id, "headline", r.headline)}</div>
-        <div class="label">Form Type</div>
-        <div>${fieldText(q, id, "form_type", r.form_type)}</div>
-        <div class="label">Offering Type</div>
-        <div>${fieldText(q, id, "offering_type", r.offering_type)}</div>
-        <div class="label">Disclosure Type</div>
-        <div>${fieldText(q, id, "disclosure_type", r.disclosure_type)}</div>
-        <div class="label">Selling Shareholder Details</div>
-        <div>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details)}</div>
-        <div class="label">Commentary</div>
-        <div>${fieldTextarea(q, id, "commentary", r.commentary)}</div>
-      </div>
-    </div>
-    <div class="panel-section">
-      <h4>Recent Offerings (Production)</h4>
-      <div id="panel-recent-offerings" class="muted" style="font-size:12px;">Loading…</div>
-    </div>
-    <div class="panel-section">
-      <h4>AI Doublecheck
-        <a href="#" id="ai-regenerate-btn" class="status" style="font-size:11px;margin-left:8px;text-decoration:underline;">Regenerate</a>
-      </h4>
-      <div id="ai-analysis-body" class="ai-analysis-body">
-        ${renderAiAnalysis(r)}
-      </div>
-    </div>
-    <div class="panel-section">
-      <h4>Numbers</h4>
-      <div class="panel-fields">
-        <div class="label">Offering Amount ($)</div><div>${fieldNum(q, id, "offering_amount", r.offering_amount)}</div>
-        <div class="label">Share Price ($)</div><div>${fieldNum(q, id, "share_price", r.share_price)}</div>
-        <div class="label">Conversion Price ($)</div><div>${fieldNum(q, id, "conversion_price", r.conversion_price)}</div>
-        <div class="label">Shares Amount</div><div>${fieldNum(q, id, "shares_amount", r.shares_amount)}</div>
-        <div class="label">Warrants Amount</div><div>${fieldNum(q, id, "warrants_amount", r.warrants_amount)}</div>
-        <div class="label">Warrant Exercise ($)</div><div>${fieldNum(q, id, "warrants_exercise_price", r.warrants_exercise_price)}</div>
-      </div>
-    </div>
-    <div class="panel-section">
-      <h4>Parties</h4>
-      <div class="panel-fields">
-        <div class="label">Bank</div><div>${fieldText(q, id, "bank", r.bank)}</div>
-        <div class="label">Potential Owners</div><div>${fieldText(q, id, "potential_owners", r.potential_owners)}</div>
+      <div class="panel-col">
+        <div class="panel-section">
+          <h4>Key Details</h4>
+          <div class="panel-fields">
+            <div class="label">Done</div>
+            <div>${booleanSelect(q, id, "done", doneAttr)}</div>
+            <div class="label">Ticker</div>
+            <div>${fieldText(q, id, "ticker", r.ticker)}</div>
+            <div class="label">Headline</div>
+            <div>${fieldText(q, id, "headline", r.headline)}</div>
+            <div class="label">Form Type</div>
+            <div>${fieldText(q, id, "form_type", r.form_type)}</div>
+            <div class="label">Offering Type</div>
+            <div>${fieldText(q, id, "offering_type", r.offering_type)}</div>
+            <div class="label">Disclosure Type</div>
+            <div>${fieldText(q, id, "disclosure_type", r.disclosure_type)}</div>
+            <div class="label">Selling Shareholder Details</div>
+            <div>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details)}</div>
+            <div class="label">Commentary</div>
+            <div>${fieldTextarea(q, id, "commentary", r.commentary)}</div>
+          </div>
+        </div>
+        <div class="panel-section">
+          <h4>Recent Offerings (Production)</h4>
+          <div id="panel-recent-offerings" class="muted" style="font-size:12px;">Loading…</div>
+        </div>
+        <div class="panel-section">
+          <h4>AI Doublecheck
+            <a href="#" id="ai-regenerate-btn" class="status" style="font-size:11px;margin-left:8px;text-decoration:underline;">Regenerate</a>
+          </h4>
+          <div id="ai-analysis-body" class="ai-analysis-body">
+            ${renderAiAnalysis(r)}
+          </div>
+        </div>
       </div>
     </div>`;
 };
@@ -2340,6 +2358,7 @@ WARRANTS_QUEUE.renderPanel = function (r) {
   const q = WARRANTS_QUEUE;
   const id = Number(r.id);
   const verifiedAttr = r.verified === true ? "true" : r.verified === false ? "false" : "";
+  document.getElementById("review-panel").classList.remove("panel-wide");
   document.getElementById("panel-title").innerHTML =
     `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`;
   document.getElementById("panel-subtitle").textContent = `Filed ${fmtDate(r.filed_at)} · id ${id}`;
