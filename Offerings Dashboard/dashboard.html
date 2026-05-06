@@ -1960,6 +1960,34 @@ function renderReviewPanel(q, r) {
   if (q.key === "offerings" && !r.doublecheck) {
     triggerAiAnalysis(q, id, false);
   }
+  // Fetch recent dilution data for warrants panel
+  if (q.key === "warrants" && r.ticker) {
+    const ddEl = document.getElementById("panel-recent-dilution");
+    if (ddEl) {
+      fetch(`/api/dilution-data-advanced?ticker=${encodeURIComponent(r.ticker)}&limit=4&page=1`)
+        .then(res => res.json())
+        .then(data => {
+          const rows = (data.results || []);
+          if (!rows.length) { ddEl.textContent = "No dilution data found."; return; }
+          const abbr = (n) => { const v = num(n); if (v == null) return "—"; if (Math.abs(v) >= 1e6) return (v/1e6).toFixed(1) + "M"; if (Math.abs(v) >= 1e3) return (v/1e3).toFixed(0) + "K"; return v.toLocaleString(); };
+          ddEl.innerHTML = `<table style="width:100%;font-size:11px;border-collapse:collapse;">
+            <thead><tr style="text-align:left;border-bottom:1px solid var(--border);">
+              <th style="padding:2px 3px;">Filed</th><th style="padding:2px 3px;">Details</th>
+              <th style="padding:2px 3px;">Ex. Price</th><th style="padding:2px 3px;">Wts Rem.</th>
+              <th style="padding:2px 3px;">Conv. Price</th><th style="padding:2px 3px;">Shares Rem.</th>
+            </tr></thead>
+            <tbody>${rows.map(d => `<tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:2px 3px;white-space:nowrap;">${fmtDate(d.filed_at)}</td>
+              <td style="padding:2px 3px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(d.details || "")}">${escapeHtml(d.details || "—")}</td>
+              <td style="padding:2px 3px;text-align:right;">${d.warrants_exercise_price != null ? "$" + Number(d.warrants_exercise_price).toFixed(2) : "—"}</td>
+              <td style="padding:2px 3px;text-align:right;">${abbr(d.warrants_remaining)}</td>
+              <td style="padding:2px 3px;text-align:right;">${d.conversion_price != null ? "$" + Number(d.conversion_price).toFixed(2) : "—"}</td>
+              <td style="padding:2px 3px;text-align:right;">${abbr(d.underlying_shares_remaining)}</td>
+            </tr>`).join("")}</tbody></table>`;
+        })
+        .catch(() => { ddEl.textContent = "Failed to load."; });
+    }
+  }
   // Fetch recent offerings for the panel
   if (q.key === "offerings" && r.ticker) {
     const roEl = document.getElementById("panel-recent-offerings");
@@ -2354,12 +2382,14 @@ WARRANTS_QUEUE.renderPanel = function (r) {
         <div class="label">Selling Shareholder Details</div>
         <div>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details)}</div>
         <div class="label">Owners 2</div>
-        <div>${fieldText(q, id, "owners_two", r.owners_two)}</div>
+        <div>${fieldTextarea(q, id, "owners_two", r.owners_two)}</div>
         <div class="label">Registered</div>
         <div>${fieldText(q, id, "registered", r.registered)}</div>
-        <div class="label">Notes</div>
-        <div>${fieldTextarea(q, id, "notes", r.notes)}</div>
       </div>
+    </div>
+    <div class="panel-section">
+      <h4>Recent Dilution Data</h4>
+      <div id="panel-recent-dilution" class="muted" style="font-size:12px;">Loading…</div>
     </div>
     <div class="panel-section">
       <h4>Warrants</h4>
