@@ -1615,7 +1615,10 @@ async function loadReviewByDate() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: missingPinned }),
       }).then((x) => x.json());
-      pinnedRows = r.results || [];
+      pinnedRows = (r.results || []).filter((row) => {
+        const fa = row.filed_at ? String(row.filed_at).slice(0, 10) : "";
+        return fa === date;
+      });
     } catch (e) { /* tolerate */ }
   }
   q.stale = new Set(pinnedRows.map((r) => Number(r.id)));
