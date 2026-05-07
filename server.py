@@ -123,19 +123,21 @@ EXCHANGE_JOIN = """
 REVIEW_QUERY = f"""
     SELECT {REVIEW_COLUMNS}
     FROM historical_float_final hf
-    {EXCHANGE_JOIN}
+    LEFT JOIN screener s ON s.ticker = hf.ticker
+        AND s.exchange IN ('NASDAQ', 'NYSE', 'AMEX')
     WHERE
         hf.form_type NOT LIKE '%%MANUAL%%'
         AND hf.filed_at = %(filed_at)s
         AND hf.ticker IS NOT NULL
         AND (
-            -- Sub-500k finals bypass category filter (most critical to fix)
+            -- Sub-500k finals bypass category AND exchange filters (most critical)
             hf.outstanding_shares_final < 500000
             OR hf.float_final < 500000
             OR hf.tradable_float_final < 500000
-            -- Normal path: category must match + under-10M or ADR
+            -- Normal path: must be on major exchange + category match + under-10M or ADR
             OR (
-                hf.category ~ 'NEGATIVE_FLOAT|HIGH|CRITICAL|SHARES_DECREASED|SHARES_MISMATCH'
+                s.ticker IS NOT NULL
+                AND hf.category ~ 'NEGATIVE_FLOAT|HIGH|CRITICAL|SHARES_DECREASED|SHARES_MISMATCH'
                 AND (
                     hf.outstanding_shares_final < 10000000
                     OR hf.float_final < 10000000
