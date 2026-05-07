@@ -455,6 +455,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if path == "/api/warrants":
                 self._handle_warrants_review(params)
                 return
+            if path == "/api/warrants-staging":
+                self._handle_warrants_staging(params)
+                return
         except Exception as e:
             self._send_json(
                 500,
@@ -521,6 +524,32 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "       offering_amount, filed_at, disclosure_type, doublecheck "
             "FROM offering_data_new_final_clone "
             "WHERE ticker = %s AND financing_activity = TRUE "
+        )
+        vals = [ticker]
+        if exclude_id:
+            sql += "AND id != %s "
+            vals.append(int(exclude_id))
+        if filed_at:
+            sql += "AND filed_at = %s "
+            vals.append(filed_at)
+        sql += "ORDER BY filed_at DESC NULLS LAST LIMIT 10"
+        with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, vals)
+            rows = cur.fetchall()
+        self._send_json(200, {"status": "success", "count": len(rows), "results": rows})
+
+    def _handle_warrants_staging(self, params):
+        ticker = (params.get("ticker", [""])[0] or "").strip().upper()
+        if not ticker:
+            self._send_json(400, {"status": "error", "error": {"code": "missing_ticker", "message": "ticker required"}})
+            return
+        exclude_id = params.get("exclude", [""])[0] or ""
+        filed_at = (params.get("filed_at", [""])[0] or "").strip()
+        sql = (
+            "SELECT id, details, owners_two, verified, warrants_exercise_price, "
+            "       warrants_amount, conversion_price, offering_amount, filed_at "
+            "FROM warrants_convertibles4 "
+            "WHERE ticker = %s "
         )
         vals = [ticker]
         if exclude_id:

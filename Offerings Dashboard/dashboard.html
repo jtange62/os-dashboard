@@ -2018,6 +2018,69 @@ function renderReviewPanel(q, r) {
   if (q.key === "offerings" && !r.doublecheck) {
     triggerAiAnalysis(q, id, false);
   }
+  // Fetch recent warrants staging rows for the panel
+  if (q.key === "warrants" && r.ticker) {
+    const wsEl = document.getElementById("panel-warrants-staging");
+    if (wsEl) {
+      fetch(`/api/warrants-staging?ticker=${encodeURIComponent(r.ticker)}&exclude=${id}&filed_at=${encodeURIComponent(r.filed_at ? String(r.filed_at).slice(0,10) : "")}`)
+        .then(res => res.json())
+        .then(data => {
+          const rows = (data.results || []);
+          const badge = document.getElementById("panel-warrants-staging-count");
+          if (badge) { badge.textContent = `${rows.length} staging`; badge.style.display = rows.length ? "" : "none"; }
+          if (!rows.length) { wsEl.textContent = "No staging rows."; return; }
+          const abbr = (n) => { const v = num(n); if (v == null) return "—"; if (Math.abs(v) >= 1e6) return (v/1e6).toFixed(1) + "M"; if (Math.abs(v) >= 1e3) return (v/1e3).toFixed(0) + "K"; return v.toLocaleString(); };
+          wsEl.innerHTML = `<table style="width:100%;font-size:11px;border-collapse:collapse;">
+            <thead><tr style="text-align:left;border-bottom:1px solid var(--border);">
+              <th style="padding:2px 3px;">Details</th><th style="padding:2px 3px;">Owners2</th>
+              <th style="padding:2px 3px;">Verified</th>
+              <th style="padding:2px 3px;">Ex. Price</th><th style="padding:2px 3px;">Wts Amt</th>
+              <th style="padding:2px 3px;">Conv $</th><th style="padding:2px 3px;">Offer $</th>
+            </tr></thead>
+            <tbody>${rows.map(s => {
+              const vv = s.verified === true ? "true" : s.verified === false ? "false" : "";
+              const o2 = (s.owners_two || "").length > 14 ? s.owners_two.substring(0,14) + "…" : (s.owners_two || "—");
+              return `<tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:2px 3px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(s.details || "")}">${escapeHtml(s.details || "—")}</td>
+              <td style="padding:2px 3px;" title="${escapeHtml(s.owners_two || "")}">${escapeHtml(o2)}</td>
+              <td style="padding:2px 3px;"><select class="warrants-staging-verified-select" data-staging-id="${s.id}" style="font-size:11px;padding:1px 2px;">
+                <option value=""${vv === "" ? " selected" : ""}>—</option>
+                <option value="true"${vv === "true" ? " selected" : ""}>True</option>
+                <option value="false"${vv === "false" ? " selected" : ""}>False</option>
+              </select></td>
+              <td style="padding:2px 3px;text-align:right;">${s.warrants_exercise_price != null ? "$" + Number(s.warrants_exercise_price).toFixed(2) : "—"}</td>
+              <td style="padding:2px 3px;text-align:right;">${abbr(s.warrants_amount)}</td>
+              <td style="padding:2px 3px;text-align:right;">${s.conversion_price != null ? "$" + Number(s.conversion_price).toFixed(2) : "—"}</td>
+              <td style="padding:2px 3px;text-align:right;">${abbr(s.offering_amount)}</td>
+            </tr>`; }).join("")}</tbody></table>`;
+          wsEl.querySelectorAll(".warrants-staging-verified-select").forEach(sel => {
+            sel.addEventListener("change", async () => {
+              const sid = Number(sel.dataset.stagingId);
+              const val = sel.value === "" ? null : sel.value === "true";
+              try {
+                const res = await fetch("/api/warrants/update", { method: "POST", headers: {"Content-Type": "application/json"},
+                  body: JSON.stringify({ id: sid, mode: "date", updates: { verified: val } }) });
+                const j = await res.json();
+                if (!j || j.status !== "success") throw new Error(j?.error?.message || "failed");
+                sel.style.background = "#d4edda";
+                setTimeout(() => sel.style.background = "", 1000);
+                // Update the main queue table row if it exists
+                const wq = WARRANTS_QUEUE;
+                if (wq.rows.has(sid)) {
+                  const prev = wq.rows.get(sid);
+                  const updated = { ...prev, ...j.result };
+                  wq.rows.set(sid, updated);
+                  wq.dirty.delete(sid);
+                  const tr = document.querySelector(`#review-body tr[data-queue="${wq.key}"][data-id="${sid}"]`);
+                  if (tr) { tr.outerHTML = wq.renderRow(updated); attachReviewHandlers(); }
+                }
+              } catch (e) { toast(`Failed to save staging verified: ${e.message}`, "error"); }
+            });
+          });
+        })
+        .catch(() => { wsEl.textContent = "Failed to load."; });
+    }
+  }
   // Fetch recent dilution data for warrants panel
   if (q.key === "warrants" && r.ticker) {
     const ddEl = document.getElementById("panel-recent-dilution");
@@ -2031,16 +2094,16 @@ function renderReviewPanel(q, r) {
           ddEl.innerHTML = `<table style="width:100%;font-size:11px;border-collapse:collapse;">
             <thead><tr style="text-align:left;border-bottom:1px solid var(--border);">
               <th style="padding:2px 3px;">Filed</th><th style="padding:2px 3px;">Details</th>
-              <th style="padding:2px 3px;">Ex. Price</th><th style="padding:2px 3px;">Wts Rem.</th>
-              <th style="padding:2px 3px;">Conv. Price</th><th style="padding:2px 3px;">Shares Rem.</th>
+              <th style="padding:2px 3px;">Ex. Price</th><th style="padding:2px 3px;">Wts Amt</th>
+              <th style="padding:2px 3px;">Conv. Price</th><th style="padding:2px 3px;">Offer $</th>
             </tr></thead>
             <tbody>${rows.map(d => `<tr style="border-bottom:1px solid var(--border);">
               <td style="padding:2px 3px;white-space:nowrap;">${fmtDate(d.filed_at)}</td>
               <td style="padding:2px 3px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(d.details || "")}">${escapeHtml(d.details || "—")}</td>
               <td style="padding:2px 3px;text-align:right;">${d.warrants_exercise_price != null ? "$" + Number(d.warrants_exercise_price).toFixed(2) : "—"}</td>
-              <td style="padding:2px 3px;text-align:right;">${abbr(d.warrants_remaining)}</td>
+              <td style="padding:2px 3px;text-align:right;">${abbr(d.warrants_amount)}</td>
               <td style="padding:2px 3px;text-align:right;">${d.conversion_price != null ? "$" + Number(d.conversion_price).toFixed(2) : "—"}</td>
-              <td style="padding:2px 3px;text-align:right;">${abbr(d.underlying_shares_remaining)}</td>
+              <td style="padding:2px 3px;text-align:right;">${abbr(d.offering_amount)}</td>
             </tr>`).join("")}</tbody></table>`;
         })
         .catch(() => { ddEl.textContent = "Failed to load."; });
@@ -2472,7 +2535,7 @@ WARRANTS_QUEUE.renderPanel = function (r) {
   const verifiedAttr = r.verified === true ? "true" : r.verified === false ? "false" : "";
   document.getElementById("review-panel").classList.add("panel-wide");
   document.getElementById("panel-title").innerHTML =
-    `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`;
+    `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span><span id="panel-warrants-staging-count" class="badge ins" style="margin-left:6px;display:none;"></span>`;
   document.getElementById("panel-subtitle").innerHTML = `<span style="color:#888;">Filed ${fmtDate(r.filed_at)} · ${fmtMcap(mcapCache[r.ticker])}</span>`;
   document.getElementById("panel-content").innerHTML = `
     <div class="panel-two-col">
@@ -2530,6 +2593,10 @@ WARRANTS_QUEUE.renderPanel = function (r) {
             <div class="label">Registered</div>
             <div>${fieldText(q, id, "registered", r.registered)}</div>
           </div>
+        </div>
+        <div class="panel-section">
+          <h4>Recent Warrants (Staging)</h4>
+          <div id="panel-warrants-staging" class="muted" style="font-size:12px;">Loading…</div>
         </div>
         <div class="panel-section">
           <h4>Recent Dilution Data</h4>
