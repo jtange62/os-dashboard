@@ -216,6 +216,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "/api/reverse-splits": "/v1/reverse-splits",
             "/api/news-basic": "/v1/news-basic",
             "/api/screener": "/v1/screener",
+            "/api/float-outstanding": "/v1/float-outstanding",
         }
         if path in askedgar_routes:
             flat = [(k, v) for k, vs in params.items() for v in vs]
@@ -653,6 +654,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "and recent news should mention the effective date.\n"
             "- If outstanding_final is very low, check whether outstanding_shares (raw) and outstanding_shares_reported diverge sharply, "
             "or whether the AI may have extracted the wrong number from the source filing -- the FILING TEXT will tell you.\n"
+            "- If the ticker is an ADR (is_adr=true), outstanding_shares and float values SHOULD be expressed in ordinary shares, "
+            "NOT ADRs. The ads_ratio field handles the conversion (ads_ratio = ordinary shares per ADR). "
+            "If the numbers look like ADR-level counts (much smaller than expected given the company's market cap and share price), "
+            "flag that the source filing may have reported ADR counts instead of ordinary shares.\n"
             "- Most important red flags: OS or float < 500k (especially < 100k or negative). "
             "Negatives are almost always wrong, unless the company is a brand-new SPAC or similar.\n\n"
             "=== OUTPUT FORMAT (follow exactly) ===\n"

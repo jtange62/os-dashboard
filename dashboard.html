@@ -240,6 +240,36 @@
     max-height: 75vh;
     overflow: auto;
   }
+  /* When review tab is active, fill viewport — no outer scroll */
+  body.review-active { overflow: hidden; }
+  body.review-active main {
+    height: calc(100vh - 80px);
+    overflow: hidden;
+    padding-bottom: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  body.review-active #tab-review {
+    display: flex !important;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+  body.review-active #tab-review > section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  body.review-active #review-body {
+    flex: 1;
+    min-height: 0;
+  }
+  body.review-active .review-table-wrap {
+    max-height: none;
+    height: 100%;
+  }
   .review-table { font-size: 12px; }
   .review-table th { font-size: 10px; white-space: nowrap; }
   .review-table th.sortable { cursor: pointer; user-select: none; }
@@ -370,6 +400,36 @@
     max-height: 240px;
     resize: vertical;
   }
+
+  /* Double-wide panel with two-column layout */
+  .panel-wide .panel-card { width: 1200px; }
+  .panel-two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+  }
+  .panel-two-col > .panel-col {
+    min-width: 0;
+    overflow-y: auto;
+  }
+  .panel-two-col > .panel-col:first-child {
+    border-right: 1px solid var(--border);
+  }
+
+  /* AI tier badges for queue table */
+  .tier-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+  }
+  .tier-critical { background: var(--red-bg); color: var(--red); }
+  .tier-discrepancy { background: var(--orange-bg); color: var(--orange); }
+  .tier-minor { background: var(--yellow-bg); color: var(--yellow); }
+  .tier-nochange { background: rgba(63, 185, 80, 0.15); color: var(--green); }
 
   .ai-analysis-body {
     font-size: 13px;
@@ -771,6 +831,7 @@ document.querySelectorAll(".tab").forEach((b) => {
     const target = b.dataset.tab;
     document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === b));
     document.querySelectorAll(".tab-content").forEach((c) => c.classList.toggle("active", c.id === `tab-${target}`));
+    document.body.classList.toggle("review-active", target === "review");
     history.replaceState(null, "", updateQueryParam("tab", target));
     if (target === "review" && !reviewLoadedOnce) {
       loadReview();
@@ -1799,6 +1860,7 @@ function renderReviewTable(rows) {
           ${dateSortHeader("Reported", "date_final")}
           ${dateSortHeader("Filed", "filed_at")}
           <th>Category</th>
+          <th>AI</th>
           <th class="num">OS (raw)</th>
           <th class="num">OS Reported</th>
           ${sortHeader("OS Final", "outstanding_shares_final")}
@@ -1853,6 +1915,7 @@ function renderReviewRow(r) {
       <td>${fmtDate(r.date_final)}</td>
       <td>${fmtDate(r.filed_at)}</td>
       <td class="note">${escapeHtml(r.category || "")}</td>
+      <td>${aiTierHtml(r.ai_analysis)}</td>
       <td>${numInput("outstanding_shares", r.outstanding_shares)}</td>
       <td>${numInput("outstanding_shares_reported", r.outstanding_shares_reported)}</td>
       <td class="num ${osBad ? "bad" : ""}">${fmtInt(r.outstanding_shares_final)}</td>
@@ -2104,6 +2167,25 @@ function openReviewPanel(url) {
   if (!r.ai_analysis) triggerAiAnalysis(url, false);
 }
 
+function aiTier(analysis) {
+  if (!analysis) return null;
+  const m = analysis.match(/^TIER:\s*(.+)/im);
+  if (!m) return null;
+  const raw = m[1].trim().toUpperCase();
+  if (raw.startsWith("CRITICAL")) return "CRITICAL";
+  if (raw.startsWith("DISCREPANCY")) return "DISCREPANCY";
+  if (raw.startsWith("MINOR")) return "MINOR";
+  if (raw.startsWith("NO")) return "NO CHANGE";
+  return raw.split(/\s+/)[0];
+}
+
+function aiTierHtml(analysis) {
+  const tier = aiTier(analysis);
+  if (!tier) return "—";
+  const cls = tier.toLowerCase().replace(/\s+/g, "");
+  return `<span class="tier-badge tier-${cls}">${escapeHtml(tier)}</span>`;
+}
+
 function renderAiAnalysis(r) {
   if (r.ai_analysis) {
     return `<div class="ai-analysis-text">${escapeHtml(r.ai_analysis)}</div>`;
@@ -2144,7 +2226,7 @@ async function triggerAiAnalysis(url, force) {
 
 function closeReviewPanel() {
   const panel = document.getElementById("review-panel");
-  panel.classList.remove("open");
+  panel.classList.remove("open", "panel-wide");
   panel.removeAttribute("data-url");
   panel.setAttribute("aria-hidden", "true");
   document.querySelectorAll("#review-body tr.active").forEach((tr) => tr.classList.remove("active"));
@@ -2158,6 +2240,7 @@ function renderReviewPanel(r) {
   const tradBad  = num(r.tradable_float_final) != null && num(r.tradable_float_final) < LOW;
   const adsAttr = r.is_adr === true ? "true" : r.is_adr === false ? "false" : "";
 
+  document.getElementById("review-panel").classList.add("panel-wide");
   document.getElementById("panel-title").innerHTML =
     `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`;
   document.getElementById("panel-subtitle").textContent =
@@ -2174,80 +2257,80 @@ function renderReviewPanel(r) {
   if (r.number_classes && Number(r.number_classes) > 1) flags.push(`${escapeHtml(r.number_classes)} classes`);
 
   const html = `
-    <div class="panel-section">
-      <h4>Source filing</h4>
-      <div class="panel-fields">
-        <div class="label">Document</div>
-        <div class="value">${askEdgarLink(r.ticker, r.document_url, "Open filing")}</div>
-        <div class="label">Ownership src</div>
-        <div class="value">${r.ownership_source ? askEdgarLink(r.ticker, r.ownership_source, "Open ownership source") : "—"}</div>
-        <div class="label">Filed at</div>
-        <div class="value">${fmtDate(r.filed_at)}</div>
-        <div class="label">Reported (date_final)</div>
-        <div class="value">${fmtDate(r.date_final)}</div>
-        <div class="label">Category</div>
-        <div class="value" style="white-space:pre-wrap;">${escapeHtml(r.category || "—")}</div>
-        ${r.details ? `<div class="label">Details</div><div class="value" style="white-space:pre-wrap;">${escapeHtml(r.details)}</div>` : ""}
-        ${r.prompt ? `<div class="label">Prompt</div><div class="value" style="white-space:pre-wrap;">${escapeHtml(r.prompt)}</div>` : ""}
-        <div class="label">Flags</div>
-        <div class="value">${flags.length ? flags.map(f => `<span class="badge ins">${f}</span>`).join(" ") : "—"}</div>
-        ${r.classes_details ? `<div class="label">Classes</div><div class="value">${escapeHtml(r.classes_details)}</div>` : ""}
-        <div class="label">Market cap</div>
-        <div class="value">${r.market_cap ? "$" + fmtInt(r.market_cap) : "—"}</div>
-        <div class="label">Last DB update</div>
-        <div class="value">${fmtDateTime(r.updated_at)}</div>
-      </div>
-    </div>
-
-    <div class="panel-section">
-      <h4>AI Analysis <a href="#" id="ai-regenerate-btn" class="status" style="font-size:11px;margin-left:8px;text-decoration:underline;">Regenerate</a></h4>
-      <div id="ai-analysis-body" class="ai-analysis-body">${renderAiAnalysis(r)}</div>
-    </div>
-
-    <div class="panel-section">
-      <h4>Computed (read-only)</h4>
-      <div class="panel-fields">
-        <div class="label">OS Final</div>
-        <div class="value ${osBad ? "bad" : ""}">${fmtInt(r.outstanding_shares_final)}${osBad ? " · LOW" : ""}</div>
-        <div class="label">Float Final</div>
-        <div class="value ${floatBad ? "bad" : ""}">${fmtInt(r.float_final)}${floatBad ? " · LOW" : ""}</div>
-        <div class="label">Tradable Final</div>
-        <div class="value ${tradBad ? "bad" : ""}">${fmtInt(r.tradable_float_final)}${tradBad ? " · LOW" : ""}</div>
-      </div>
-    </div>
-
-    <div class="panel-section">
-      <h4>Editable</h4>
-      <div class="panel-fields">
-        <div class="label">Outstanding (raw)</div>
-        <div>${numInput("outstanding_shares", r.outstanding_shares)}</div>
-        <div class="label">OS Reported</div>
-        <div>${numInput("outstanding_shares_reported", r.outstanding_shares_reported)}</div>
-        <div class="label">Float (raw)</div>
-        <div>${numInput("float", r.float)}</div>
-        <div class="label">Tradable (raw)</div>
-        <div>${numInput("tradable_float", r.tradable_float)}</div>
-        <div class="label">Restricted</div>
-        <div>${numInput("restricted_shares", r.restricted_shares)}</div>
-        <div class="label">Affiliate</div>
-        <div>${numInput("affiliate_shares", r.affiliate_shares)}</div>
-        <div class="label">ADS Ratio</div>
-        <div>${numInput("ads_ratio", r.ads_ratio)}</div>
-        <div class="label">ADR</div>
-        <div>
-          <select class="editable" data-url="${escapeHtml(url)}" data-field="is_adr">
-            <option value="" ${adsAttr === "" ? "selected" : ""}>—</option>
-            <option value="true" ${adsAttr === "true" ? "selected" : ""}>Yes</option>
-            <option value="false" ${adsAttr === "false" ? "selected" : ""}>No</option>
-          </select>
+    <div class="panel-two-col">
+      <div class="panel-col">
+        <div class="panel-section">
+          <h4>Computed (read-only)</h4>
+          <div class="panel-fields">
+            <div class="label">OS Final</div>
+            <div class="value ${osBad ? "bad" : ""}">${fmtInt(r.outstanding_shares_final)}${osBad ? " · LOW" : ""}</div>
+            <div class="label">Float Final</div>
+            <div class="value ${floatBad ? "bad" : ""}">${fmtInt(r.float_final)}${floatBad ? " · LOW" : ""}</div>
+            <div class="label">Tradable Final</div>
+            <div class="value ${tradBad ? "bad" : ""}">${fmtInt(r.tradable_float_final)}${tradBad ? " · LOW" : ""}</div>
+          </div>
         </div>
-        <div class="label">Notes</div>
-        <div>
-          <textarea class="editable notes" data-url="${escapeHtml(url)}" data-field="notes" placeholder="Notes for Jason…">${escapeHtml(r.notes || "")}</textarea>
+        <div class="panel-section">
+          <h4>Editable</h4>
+          <div class="panel-fields">
+            <div class="label">Outstanding (raw)</div>
+            <div>${numInput("outstanding_shares", r.outstanding_shares)}</div>
+            <div class="label">OS Reported</div>
+            <div>${numInput("outstanding_shares_reported", r.outstanding_shares_reported)}</div>
+            <div class="label">Float (raw)</div>
+            <div>${numInput("float", r.float)}</div>
+            <div class="label">Tradable (raw)</div>
+            <div>${numInput("tradable_float", r.tradable_float)}</div>
+            <div class="label">Restricted</div>
+            <div>${numInput("restricted_shares", r.restricted_shares)}</div>
+            <div class="label">Affiliate</div>
+            <div>${numInput("affiliate_shares", r.affiliate_shares)}</div>
+            <div class="label">ADS Ratio</div>
+            <div>${numInput("ads_ratio", r.ads_ratio)}</div>
+            <div class="label">ADR</div>
+            <div>
+              <select class="editable" data-url="${escapeHtml(url)}" data-field="is_adr">
+                <option value="" ${adsAttr === "" ? "selected" : ""}>—</option>
+                <option value="true" ${adsAttr === "true" ? "selected" : ""}>Yes</option>
+                <option value="false" ${adsAttr === "false" ? "selected" : ""}>No</option>
+              </select>
+            </div>
+            <div class="label">Notes</div>
+            <div>
+              <textarea class="editable notes" data-url="${escapeHtml(url)}" data-field="notes" placeholder="Notes for Jason…">${escapeHtml(r.notes || "")}</textarea>
+            </div>
+          </div>
         </div>
       </div>
+      <div class="panel-col">
+        <div class="panel-section">
+          <h4>AI Analysis <a href="#" id="ai-regenerate-btn" class="status" style="font-size:11px;margin-left:8px;text-decoration:underline;">Regenerate</a></h4>
+          <div id="ai-analysis-body" class="ai-analysis-body">${renderAiAnalysis(r)}</div>
+        </div>
+        <div class="panel-section">
+          <h4>Source filing</h4>
+          <div class="panel-fields">
+            <div class="label">Document</div>
+            <div class="value">${askEdgarLink(r.ticker, r.document_url, "Open filing")}</div>
+            <div class="label">Ownership src</div>
+            <div class="value">${r.ownership_source ? askEdgarLink(r.ticker, r.ownership_source, "Open ownership source") : "—"}</div>
+            <div class="label">Filed at</div>
+            <div class="value">${fmtDate(r.filed_at)}</div>
+            <div class="label">Reported (date_final)</div>
+            <div class="value">${fmtDate(r.date_final)}</div>
+            <div class="label">Category</div>
+            <div class="value" style="white-space:pre-wrap;">${escapeHtml(r.category || "—")}</div>
+            ${r.details ? `<div class="label">Details</div><div class="value" style="white-space:pre-wrap;">${escapeHtml(r.details)}</div>` : ""}
+            ${r.prompt ? `<div class="label">Prompt</div><div class="value" style="white-space:pre-wrap;">${escapeHtml(r.prompt)}</div>` : ""}
+            <div class="label">Flags</div>
+            <div class="value">${flags.length ? flags.map(f => `<span class="badge ins">${f}</span>`).join(" ") : "—"}</div>
+            ${r.classes_details ? `<div class="label">Classes</div><div class="value">${escapeHtml(r.classes_details)}</div>` : ""}
+            <div class="label">Market cap</div>
+            <div class="value" id="panel-market-cap">Loading…</div>
+          </div>
+        </div>
+      </div>
     </div>
-
   `;
 
   const content = document.getElementById("panel-content");
@@ -2287,6 +2370,22 @@ function renderReviewPanel(r) {
   updateSaveButtonsFor(url);
   // scroll the panel back to top when the row changes
   document.querySelector("#review-panel .panel-card").scrollTop = 0;
+
+  // Fetch market cap from AskEdgar float-outstanding API.
+  if (r.ticker) {
+    fetch(`/api/float-outstanding?ticker=${encodeURIComponent(r.ticker)}`)
+      .then((res) => res.json())
+      .then((d) => {
+        const el = document.getElementById("panel-market-cap");
+        if (!el) return;
+        const mc = (d.results && d.results[0] && d.results[0].market_cap_final) || null;
+        el.textContent = mc != null ? "$" + fmtInt(mc) : "—";
+      })
+      .catch(() => {
+        const el = document.getElementById("panel-market-cap");
+        if (el) el.textContent = "—";
+      });
+  }
 }
 
 function panelNavigate(delta) {
