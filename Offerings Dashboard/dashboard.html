@@ -2046,6 +2046,56 @@ function renderReviewPanel(q, r) {
         .catch(() => { ddEl.textContent = "Failed to load."; });
     }
   }
+  // Fetch recent staging rows for the panel
+  if (q.key === "offerings" && r.ticker) {
+    const stEl = document.getElementById("panel-recent-staging");
+    if (stEl) {
+      fetch(`/api/staging-rows?ticker=${encodeURIComponent(r.ticker)}&exclude=${id}`)
+        .then(res => res.json())
+        .then(data => {
+          const rows = (data.results || []);
+          const badge = document.getElementById("panel-staging-count");
+          if (badge) { badge.textContent = `${rows.length} staging`; badge.style.display = rows.length ? "" : "none"; }
+          if (!rows.length) { stEl.textContent = "No staging rows."; return; }
+          stEl.innerHTML = `<table style="width:100%;font-size:11px;border-collapse:collapse;">
+            <thead><tr style="text-align:left;border-bottom:1px solid var(--border);">
+              <th style="padding:2px 4px;">Filed</th><th style="padding:2px 4px;">Headline</th>
+              <th style="padding:2px 4px;">Done</th><th style="padding:2px 4px;">Form</th>
+              <th style="padding:2px 4px;">Shares</th><th style="padding:2px 4px;">Price</th>
+              <th style="padding:2px 4px;">Amount</th></tr></thead>
+            <tbody>${rows.map(s => {
+              const dv = s.done === true ? "true" : s.done === false ? "false" : "";
+              return `<tr style="border-bottom:1px solid var(--border);">
+              <td style="padding:2px 4px;white-space:nowrap;">${fmtDate(s.filed_at)}</td>
+              <td style="padding:2px 4px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(s.headline || "")}">${escapeHtml(s.headline || "—")}</td>
+              <td style="padding:2px 4px;"><select class="staging-done-select" data-staging-id="${s.id}" style="font-size:11px;padding:1px 2px;">
+                <option value=""${dv === "" ? " selected" : ""}>—</option>
+                <option value="true"${dv === "true" ? " selected" : ""}>True</option>
+                <option value="false"${dv === "false" ? " selected" : ""}>False</option>
+              </select></td>
+              <td style="padding:2px 4px;">${escapeHtml(s.form_type || "—")}</td>
+              <td style="padding:2px 4px;text-align:right;">${s.shares_amount != null ? Number(s.shares_amount).toLocaleString() : "—"}</td>
+              <td style="padding:2px 4px;text-align:right;">${s.share_price != null ? "$" + Number(s.share_price).toFixed(2) : "—"}</td>
+              <td style="padding:2px 4px;text-align:right;">${s.offering_amount != null ? "$" + Number(s.offering_amount).toLocaleString() : "—"}</td>
+            </tr>`; }).join("")}</tbody></table>`;
+          stEl.querySelectorAll(".staging-done-select").forEach(sel => {
+            sel.addEventListener("change", async () => {
+              const sid = Number(sel.dataset.stagingId);
+              const val = sel.value === "" ? null : sel.value === "true";
+              try {
+                const res = await fetch("/api/review/update", { method: "POST", headers: {"Content-Type": "application/json"},
+                  body: JSON.stringify({ id: sid, mode: "date", updates: { done: val } }) });
+                const j = await res.json();
+                if (!j || j.status !== "success") throw new Error(j?.error?.message || "failed");
+                sel.style.background = "#d4edda";
+                setTimeout(() => sel.style.background = "", 1000);
+              } catch (e) { toast(`Failed to save staging done: ${e.message}`, "error"); }
+            });
+          });
+        })
+        .catch(() => { stEl.textContent = "Failed to load."; });
+    }
+  }
   // Fetch recent offerings for the panel
   if (q.key === "offerings" && r.ticker) {
     const roEl = document.getElementById("panel-recent-offerings");
@@ -2248,7 +2298,7 @@ OFFERINGS_QUEUE.renderPanel = function (r) {
   const doneAttr = r.done === true ? "true" : r.done === false ? "false" : "";
   document.getElementById("review-panel").classList.add("panel-wide");
   document.getElementById("panel-title").innerHTML =
-    `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`;
+    `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span><span id="panel-staging-count" class="badge ins" style="margin-left:6px;display:none;"></span>`;
   document.getElementById("panel-subtitle").innerHTML = `<span style="color:#888;">Filed ${fmtDate(r.filed_at)} · ${fmtMcap(mcapCache[r.ticker])}</span>`;
   document.getElementById("panel-content").innerHTML = `
     <div class="panel-two-col">
@@ -2304,6 +2354,10 @@ OFFERINGS_QUEUE.renderPanel = function (r) {
             <div class="label">Commentary</div>
             <div>${fieldTextarea(q, id, "commentary", r.commentary)}</div>
           </div>
+        </div>
+        <div class="panel-section">
+          <h4>Recent Offerings (Staging)</h4>
+          <div id="panel-recent-staging" class="muted" style="font-size:12px;">Loading…</div>
         </div>
         <div class="panel-section">
           <h4>Recent Offerings (Production)</h4>
