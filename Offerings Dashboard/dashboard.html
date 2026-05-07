@@ -2091,6 +2091,16 @@ function renderReviewPanel(q, r) {
                 if (!j || j.status !== "success") throw new Error(j?.error?.message || "failed");
                 sel.style.background = "#d4edda";
                 setTimeout(() => sel.style.background = "", 1000);
+                // Update the main queue table row if it exists
+                const q = activeQueue();
+                if (q && q.rows.has(sid)) {
+                  const prev = q.rows.get(sid);
+                  const updated = { ...prev, ...j.result, market_cap_final: prev.market_cap_final };
+                  q.rows.set(sid, updated);
+                  q.dirty.delete(sid);
+                  const tr = document.querySelector(`#review-body tr[data-queue="${q.key}"][data-id="${sid}"]`);
+                  if (tr) { tr.outerHTML = q.renderRow(updated); attachReviewHandlers(); }
+                }
               } catch (e) { toast(`Failed to save staging done: ${e.message}`, "error"); }
             });
           });
