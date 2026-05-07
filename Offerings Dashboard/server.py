@@ -436,6 +436,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "/api/offerings-advanced": "/v1/offerings-advanced",
             "/api/dilution-data-advanced": "/v1/dilution-data-advanced",
             "/api/news-basic": "/v1/news-basic",
+            "/api/float-outstanding": "/v1/float-outstanding",
         }
         if path in askedgar_routes:
             flat = [(k, v) for k, vs in params.items() for v in vs]

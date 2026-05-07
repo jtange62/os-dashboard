@@ -1430,6 +1430,19 @@ function chicagoYesterdayISO() {
 let reviewMode = "date";
 let newRecordCounter = 0;
 let reviewLoadedOnce = false;
+const mcapCache = {};
+function fmtMcap(v) { const n = num(v); if (n == null) return "—"; if (n >= 1e9) return "$" + (n/1e9).toFixed(2) + "B"; if (n >= 1e6) return "$" + (n/1e6).toFixed(1) + "M"; if (n >= 1e3) return "$" + (n/1e3).toFixed(0) + "K"; return "$" + n.toLocaleString(); }
+async function fetchMcaps(tickers) {
+  const need = [...new Set(tickers.filter(t => t && !(t in mcapCache)))];
+  if (!need.length) return;
+  await Promise.all(need.map(async t => {
+    try {
+      const r = await fetch(`/api/float-outstanding?ticker=${encodeURIComponent(t)}`).then(x => x.json());
+      const res = (r.results || [])[0];
+      mcapCache[t] = res?.market_cap_final ?? null;
+    } catch { mcapCache[t] = null; }
+  }));
+}
 
 function setReviewMode(mode, opts = {}) {
   reviewMode = mode;
@@ -1632,6 +1645,7 @@ async function loadReviewByDate() {
   const filterNote = filtered.length < all.length ? ` · showing <strong>${filtered.length}</strong>` : "";
   summary.innerHTML = `<strong>${main.count}</strong> matching · <strong>${pinnedRows.length}</strong> pinned (filter changed) · filed_at <strong>${main.filed_at}</strong>${statusLabel}${filterNote}`;
   renderReviewTable(q, filtered);
+  fetchMcaps(all.map(r => r.ticker)).then(() => renderReviewTable(q, filterRows(q, [...q.rows.values()]), true));
 }
 
 async function loadReviewByTicker() {
@@ -1671,6 +1685,7 @@ async function loadReviewByTicker() {
   const filterNote = filtered.length < main.results.length ? ` · showing <strong>${filtered.length}</strong>` : "";
   summary.innerHTML = `<strong>${main.count}</strong> records for <strong>${escapeHtml(ticker)}</strong> · all dates${statusLabel}${filterNote}`;
   renderReviewTable(q, filtered);
+  fetchMcaps(main.results.map(r => r.ticker)).then(() => renderReviewTable(q, filterRows(q, [...q.rows.values()]), true));
 }
 
 function renderReviewTable(q, rows, isRefilter) {
@@ -2172,7 +2187,7 @@ OFFERINGS_QUEUE.renderRow = function (r) {
         ${stale ? `<span class="badge ins">stale</span>` : ""}
         <div style="margin-top:4px;">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener" class="form-link">${escapeHtml(r.form_type || "—")}</a>` : escapeHtml(r.form_type || "—")}</div>
       </td>
-      <td>${fmtDate(r.filed_at)}</td>
+      <td>${fmtDate(r.filed_at)}<div style="color:#888;font-size:11px;">${fmtMcap(mcapCache[r.ticker])}</div></td>
       <td>${fieldText(q, id, "offering_type", r.offering_type, "text-short")}</td>
       <td>${fieldDate(q, id, "period_ending", r.period_ending)}</td>
       <td>${booleanSelect(q, id, "done", doneAttr)}</td>
@@ -2206,7 +2221,7 @@ OFFERINGS_QUEUE.renderPanel = function (r) {
   document.getElementById("review-panel").classList.add("panel-wide");
   document.getElementById("panel-title").innerHTML =
     `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`;
-  document.getElementById("panel-subtitle").textContent = `Filed ${fmtDate(r.filed_at)} · id ${id}`;
+  document.getElementById("panel-subtitle").innerHTML = `<span style="color:#888;">Filed ${fmtDate(r.filed_at)} · ${fmtMcap(mcapCache[r.ticker])}</span>`;
   document.getElementById("panel-content").innerHTML = `
     <div class="panel-two-col">
       <div class="panel-col">
@@ -2325,7 +2340,7 @@ WARRANTS_QUEUE.renderRow = function (r) {
         ${stale ? `<span class="badge ins">stale</span>` : ""}
         <div style="margin-top:4px;">${r.askedgar_url ? `<a href="${escapeHtml(r.askedgar_url)}" target="_blank" rel="noopener" class="form-link">${escapeHtml(r.form_type || "—")}</a>` : escapeHtml(r.form_type || "—")}</div>
       </td>
-      <td>${fmtDate(r.filed_at)}</td>
+      <td>${fmtDate(r.filed_at)}<div style="color:#888;font-size:11px;">${fmtMcap(mcapCache[r.ticker])}</div></td>
       <td>${booleanSelect(q, id, "verified", verifiedAttr)}</td>
       <td>${fieldText(q, id, "summary", r.summary, "text-mid")}</td>
       <td>${fieldText(q, id, "details", r.details, "text-mid")}</td>
@@ -2364,7 +2379,7 @@ WARRANTS_QUEUE.renderPanel = function (r) {
   document.getElementById("review-panel").classList.add("panel-wide");
   document.getElementById("panel-title").innerHTML =
     `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`;
-  document.getElementById("panel-subtitle").textContent = `Filed ${fmtDate(r.filed_at)} · id ${id}`;
+  document.getElementById("panel-subtitle").innerHTML = `<span style="color:#888;">Filed ${fmtDate(r.filed_at)} · ${fmtMcap(mcapCache[r.ticker])}</span>`;
   document.getElementById("panel-content").innerHTML = `
     <div class="panel-two-col">
       <div class="panel-col">
