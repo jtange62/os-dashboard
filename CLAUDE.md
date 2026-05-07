@@ -158,6 +158,29 @@ The `<span class="dl-icons">` wrapper has `onclick="event.stopPropagation()"` so
 - Postgres queries containing literal `%` need it doubled (`'%%MANUAL%%'`) because psycopg uses `%s` placeholders.
 - New CSS classes inside the detail panel should NOT reuse names already used elsewhere (`.panel-grid` was renamed to `.panel-fields` after a clobbering bug — the legacy `.panel-grid` is the Research-tab vertical-stack wrapper).
 
+## Deployment
+
+- **GitHub repo**: `https://github.com/jasontange/os-dashboard`
+- **Lightsail instance**: `os-review-micro` — Ubuntu, Virginia Zone A
+  - IP: `44.204.200.18`
+  - SSH key: `C:\Users\jason\Downloads\LightsailDefaultKey-us-east-1.pem`
+  - SSH: `ssh -i "C:\Users\jason\Downloads\LightsailDefaultKey-us-east-1.pem" ubuntu@44.204.200.18`
+- **Repo on instance**: `/opt/os-dashboard-repo/` (symlinked from `/opt/os-dashboard` and `/opt/offerings-dashboard`)
+- **Git auth on instance**: token embedded in the HTTPS remote URL (already configured). `git pull` works without extra credentials.
+- **Systemd services**: `os-dashboard.service` (port 8765), `offerings-dashboard.service` (port 8766). Both set to `Restart=always`.
+- **config.json**: gitignored — already present on the instance at both `/opt/os-dashboard-repo/config.json` and `/opt/os-dashboard-repo/Offerings Dashboard/config.json`. If credentials change, `scp` the updated file to the instance.
+- **Deploy steps**: push to GitHub, then SSH in and pull + restart:
+  ```
+  ssh -i "C:\Users\jason\Downloads\LightsailDefaultKey-us-east-1.pem" ubuntu@44.204.200.18
+  cd /opt/os-dashboard-repo && git pull
+  sudo systemctl restart os-dashboard           # if server.py changed
+  sudo systemctl restart offerings-dashboard    # if Offerings Dashboard/server.py changed
+  ```
+  Or as a one-liner from local:
+  ```
+  ssh -i "C:\Users\jason\Downloads\LightsailDefaultKey-us-east-1.pem" ubuntu@44.204.200.18 "cd /opt/os-dashboard-repo && git pull && sudo systemctl restart offerings-dashboard"
+  ```
+
 ## Things to know
 
 - The chart pulls from AskEdgar, not Postgres, so it can't show `restricted_shares` directly — we side-fetch by ticker and merge by `document_url`. Rows whose URLs aren't in Postgres show "—".

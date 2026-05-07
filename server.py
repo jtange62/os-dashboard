@@ -129,6 +129,14 @@ REVIEW_QUERY = f"""
         AND hf.filed_at = %(filed_at)s
         AND hf.category ~ 'NEGATIVE_FLOAT|HIGH|CRITICAL|SHARES_DECREASED|SHARES_MISMATCH'
         AND hf.ticker IS NOT NULL
+        AND (
+            hf.outstanding_shares_final < 10000000
+            OR hf.float_final < 10000000
+            OR hf.tradable_float_final < 10000000
+            OR hf.ticker IN (
+                SELECT DISTINCT ticker FROM historical_float_final WHERE is_adr = true
+            )
+        )
     ORDER BY hf.date_final DESC
     LIMIT 1000
 """

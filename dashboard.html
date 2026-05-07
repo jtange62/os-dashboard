@@ -1670,7 +1670,14 @@ async function loadReviewByDate() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ document_urls: missingPinned }),
       }).then((x) => x.json());
-      pinnedRows = r.results || [];
+      pinnedRows = (r.results || []).filter((row) => {
+        if (row.filed_at !== date) return false;
+        const os = parseFloat(row.outstanding_shares_final);
+        const fl = parseFloat(row.float_final);
+        const tf = parseFloat(row.tradable_float_final);
+        const underCap = (os < 10000000) || (fl < 10000000) || (tf < 10000000);
+        return underCap || row.is_adr === true;
+      });
     } catch (e) { /* tolerate */ }
   }
   staleUrls = new Set(pinnedRows.map((r) => r.document_url));
