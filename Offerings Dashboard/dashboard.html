@@ -613,6 +613,13 @@
       <button type="button" class="secondary" id="review-today">Today</button>
       <button type="button" class="secondary" id="review-yesterday">Yesterday (CDT)</button>
       <button type="button" class="secondary" id="new-record-btn" style="margin-left:12px;">+ New Record</button>
+      <span style="margin-left:12px;font-size:12px;color:#888;">Set visible:</span>
+      <select id="bulk-set-value" style="font-size:12px;padding:2px 4px;">
+        <option value="true">True</option>
+        <option value="false">False</option>
+        <option value="">— (null)</option>
+      </select>
+      <button type="button" class="secondary" id="bulk-set-btn" style="font-size:12px;">Apply</button>
       <button type="button" class="primary" id="save-all-btn" style="margin-left:8px;" disabled>Save All</button>
       <span id="review-summary" class="status" style="margin-left:auto;"></span>
     </form>
@@ -624,6 +631,13 @@
       <button type="submit" class="primary">Load history</button>
       <button type="button" class="secondary" id="review-back-to-daily">← Back to daily queue</button>
       <button type="button" class="secondary" id="new-record-btn-ticker" style="margin-left:12px;">+ New Record</button>
+      <span style="margin-left:12px;font-size:12px;color:#888;">Set visible:</span>
+      <select id="bulk-set-value-ticker" style="font-size:12px;padding:2px 4px;">
+        <option value="true">True</option>
+        <option value="false">False</option>
+        <option value="">— (null)</option>
+      </select>
+      <button type="button" class="secondary" id="bulk-set-btn-ticker" style="font-size:12px;">Apply</button>
       <button type="button" class="primary" id="save-all-btn-ticker" style="margin-left:8px;" disabled>Save All</button>
       <span id="review-summary-ticker" class="status" style="margin-left:auto;"></span>
     </form>
@@ -1835,6 +1849,37 @@ async function saveAll() {
 
 document.getElementById("save-all-btn").addEventListener("click", saveAll);
 document.getElementById("save-all-btn-ticker").addEventListener("click", saveAll);
+
+function bulkSetVisible() {
+  const q = activeQueue();
+  if (!q) return;
+  const ids = q.visibleIds || [...q.rows.keys()];
+  if (!ids.length) return;
+  const field = q.statusField; // "done" for offerings, "verified" for warrants
+  const selId = reviewMode === "ticker" ? "bulk-set-value-ticker" : "bulk-set-value";
+  const newVal = document.getElementById(selId).value;
+  const label = newVal === "true" ? "True" : newVal === "false" ? "False" : "null";
+  if (!confirm(`Set ${field} = ${label} on ${ids.length} visible row(s)?`)) return;
+  ids.forEach(id => {
+    const row = q.rows.get(id);
+    if (!row || row._isNew) return;
+    const orig = originalValueFor(q, id, field);
+    const dirty = !isSameValue(q, newVal, orig, field);
+    let bag = q.dirty.get(id) || {};
+    if (dirty) bag[field] = newVal; else delete bag[field];
+    if (Object.keys(bag).length) q.dirty.set(id, bag); else q.dirty.delete(id);
+    // Update all matching inputs in the table
+    inputsFor(q, id, field).forEach(el => {
+      el.value = newVal;
+      el.classList.toggle("dirty", dirty);
+    });
+    updateSaveButtonsFor(q, id);
+  });
+  updateSaveAllButton();
+  toast(`Set ${field} = ${label} on ${ids.length} row(s) — click Save All to commit`);
+}
+document.getElementById("bulk-set-btn").addEventListener("click", bulkSetVisible);
+document.getElementById("bulk-set-btn-ticker").addEventListener("click", bulkSetVisible);
 
 async function saveRow(q, id) {
   const row = q.rows.get(Number(id));
