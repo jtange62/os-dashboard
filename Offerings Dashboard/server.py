@@ -515,6 +515,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json(400, {"status": "error", "error": {"code": "missing_ticker", "message": "ticker required"}})
             return
         exclude_id = params.get("exclude", [""])[0] or ""
+        filed_at = (params.get("filed_at", [""])[0] or "").strip()
         sql = (
             "SELECT id, headline, done, form_type, shares_amount, share_price, "
             "       offering_amount, filed_at, disclosure_type, doublecheck "
@@ -525,6 +526,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if exclude_id:
             sql += "AND id != %s "
             vals.append(int(exclude_id))
+        if filed_at:
+            sql += "AND filed_at = %s "
+            vals.append(filed_at)
         sql += "ORDER BY filed_at DESC NULLS LAST LIMIT 10"
         with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(sql, vals)

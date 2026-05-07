@@ -2050,7 +2050,7 @@ function renderReviewPanel(q, r) {
   if (q.key === "offerings" && r.ticker) {
     const stEl = document.getElementById("panel-recent-staging");
     if (stEl) {
-      fetch(`/api/staging-rows?ticker=${encodeURIComponent(r.ticker)}&exclude=${id}`)
+      fetch(`/api/staging-rows?ticker=${encodeURIComponent(r.ticker)}&exclude=${id}&filed_at=${encodeURIComponent(r.filed_at ? String(r.filed_at).slice(0,10) : "")}`)
         .then(res => res.json())
         .then(data => {
           const rows = (data.results || []);
