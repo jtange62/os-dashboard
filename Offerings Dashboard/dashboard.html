@@ -2059,20 +2059,22 @@ function renderReviewPanel(q, r) {
           if (!rows.length) { stEl.textContent = "No staging rows."; return; }
           stEl.innerHTML = `<table style="width:100%;font-size:11px;border-collapse:collapse;">
             <thead><tr style="text-align:left;border-bottom:1px solid var(--border);">
-              <th style="padding:2px 4px;">Filed</th><th style="padding:2px 4px;">Headline</th>
-              <th style="padding:2px 4px;">Done</th><th style="padding:2px 4px;">Form</th>
+              <th style="padding:2px 4px;">Headline</th>
+              <th style="padding:2px 4px;">Done</th><th style="padding:2px 4px;">AI</th>
+              <th style="padding:2px 4px;">Form</th>
               <th style="padding:2px 4px;">Shares</th><th style="padding:2px 4px;">Price</th>
               <th style="padding:2px 4px;">Amount</th></tr></thead>
             <tbody>${rows.map(s => {
               const dv = s.done === true ? "true" : s.done === false ? "false" : "";
+              const aiDone = (() => { const dc = s.doublecheck || ""; const m = dc.match(/Done:\s*(True|False)/i); return m ? m[1] : "—"; })();
               return `<tr style="border-bottom:1px solid var(--border);">
-              <td style="padding:2px 4px;white-space:nowrap;">${fmtDate(s.filed_at)}</td>
               <td style="padding:2px 4px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(s.headline || "")}">${escapeHtml(s.headline || "—")}</td>
               <td style="padding:2px 4px;"><select class="staging-done-select" data-staging-id="${s.id}" style="font-size:11px;padding:1px 2px;">
                 <option value=""${dv === "" ? " selected" : ""}>—</option>
                 <option value="true"${dv === "true" ? " selected" : ""}>True</option>
                 <option value="false"${dv === "false" ? " selected" : ""}>False</option>
               </select></td>
+              <td style="padding:2px 4px;">${aiDone}</td>
               <td style="padding:2px 4px;">${escapeHtml(s.form_type || "—")}</td>
               <td style="padding:2px 4px;text-align:right;">${s.shares_amount != null ? Number(s.shares_amount).toLocaleString() : "—"}</td>
               <td style="padding:2px 4px;text-align:right;">${s.share_price != null ? "$" + Number(s.share_price).toFixed(2) : "—"}</td>

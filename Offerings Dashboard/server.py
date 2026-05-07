@@ -517,7 +517,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         exclude_id = params.get("exclude", [""])[0] or ""
         sql = (
             "SELECT id, headline, done, form_type, shares_amount, share_price, "
-            "       offering_amount, filed_at, disclosure_type "
+            "       offering_amount, filed_at, disclosure_type, doublecheck "
             "FROM offering_data_new_final_clone "
             "WHERE ticker = %s AND financing_activity = TRUE "
         )
