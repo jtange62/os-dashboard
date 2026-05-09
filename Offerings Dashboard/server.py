@@ -153,13 +153,37 @@ def _build_review_query(done_filter):
         LIMIT 1000
     """
 
+REVIEW_COLUMNS_TICKER = """
+    id,
+    ticker,
+    filed_at,
+    period_ending,
+    headline,
+    selling_shareholder_details,
+    commentary,
+    disclosure_type,
+    askedgar_url,
+    offering_amount,
+    share_price,
+    conversion_price,
+    shares_amount,
+    warrants_amount,
+    warrants_exercise_price,
+    potential_owners,
+    bank,
+    form_type,
+    offering_type,
+    financing_activity,
+    doublecheck,
+    updated_at
+"""
+
 def _build_review_by_ticker_query(done_filter):
-    done_sql = DONE_CLAUSES.get(done_filter, "")
+    # all_financings_final has no `done` column, so skip done filter
     return f"""
-        SELECT {REVIEW_COLUMNS}
+        SELECT {REVIEW_COLUMNS_TICKER}
         FROM all_financings_final
         WHERE ticker = %(ticker)s
-        {done_sql}
         ORDER BY filed_at DESC NULLS LAST, id DESC
         LIMIT 1000
     """

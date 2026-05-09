@@ -631,13 +631,15 @@
       <button type="submit" class="primary">Load history</button>
       <button type="button" class="secondary" id="review-back-to-daily">← Back to daily queue</button>
       <button type="button" class="secondary" id="new-record-btn-ticker" style="margin-left:12px;">+ New Record</button>
-      <span style="margin-left:12px;font-size:12px;color:#888;">Set visible:</span>
-      <select id="bulk-set-value-ticker" style="font-size:12px;padding:2px 4px;">
-        <option value="true">True</option>
-        <option value="false">False</option>
-        <option value="">— (null)</option>
-      </select>
-      <button type="button" class="secondary" id="bulk-set-btn-ticker" style="font-size:12px;">Apply</button>
+      <span id="bulk-set-ticker-wrap" style="margin-left:12px;font-size:12px;">
+        <span style="color:#888;">Set visible:</span>
+        <select id="bulk-set-value-ticker" style="font-size:12px;padding:2px 4px;">
+          <option value="true">True</option>
+          <option value="false">False</option>
+          <option value="">— (null)</option>
+        </select>
+        <button type="button" class="secondary" id="bulk-set-btn-ticker" style="font-size:12px;">Apply</button>
+      </span>
       <button type="button" class="primary" id="save-all-btn-ticker" style="margin-left:8px;" disabled>Save All</button>
       <span id="review-summary-ticker" class="status" style="margin-left:auto;"></span>
     </form>
@@ -1460,6 +1462,13 @@ async function fetchMcaps(tickers) {
   }));
 }
 
+function syncBulkSetVisibility() {
+  // Hide "Set visible" in ticker mode for offerings (all_financings_final has no `done` column)
+  const hide = reviewMode === "ticker" && activeQueueKey === "offerings";
+  const wrap = document.getElementById("bulk-set-ticker-wrap");
+  if (wrap) wrap.style.display = hide ? "none" : "";
+}
+
 function setReviewMode(mode, opts = {}) {
   reviewMode = mode;
   document.querySelectorAll(".mode-btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
@@ -1470,6 +1479,7 @@ function setReviewMode(mode, opts = {}) {
   if (mode === "ticker" && opts.ticker) u.searchParams.set("rt", opts.ticker.toUpperCase());
   else if (mode === "date") u.searchParams.delete("rt");
   history.replaceState(null, "", u.pathname + u.search);
+  syncBulkSetVisibility();
   if (mode === "ticker" && !document.getElementById("review-ticker").value) {
     document.getElementById("review-body").innerHTML =
       `<div class="status">Enter a ticker above to load its full history.</div>`;
@@ -1490,6 +1500,7 @@ function setSubtab(key, opts = {}) {
   sel.value = [...sel.options].some((o) => o.value === stored) ? stored : "";
   // Build queue-specific multi-select filters.
   buildMultiFilters(q);
+  syncBulkSetVisibility();
   // Persist sub-tab in URL.
   const u = new URL(window.location);
   u.searchParams.set("rsub", key);
@@ -1853,6 +1864,8 @@ document.getElementById("save-all-btn-ticker").addEventListener("click", saveAll
 function bulkSetVisible() {
   const q = activeQueue();
   if (!q) return;
+  // all_financings_final has no `done` column
+  if (reviewMode === "ticker" && q.key === "offerings") { toast("Cannot set done in ticker mode (production table)", "error"); return; }
   const ids = q.visibleIds || [...q.rows.keys()];
   if (!ids.length) return;
   const field = q.statusField; // "done" for offerings, "verified" for warrants
@@ -2352,7 +2365,7 @@ OFFERINGS_QUEUE.renderTableHead = () => `
     <th>Filed</th>
     <th>Offering Type</th>
     <th>Period Ending</th>
-    <th>Done</th>
+    ${reviewMode !== "ticker" ? "<th>Done</th>" : ""}
     <th>Disclosure Type</th>
     <th>Headline</th>
     <th>Selling Shareholder</th>
@@ -2388,7 +2401,7 @@ OFFERINGS_QUEUE.renderRow = function (r) {
       <td>${fmtDate(r.filed_at)}<div style="color:#888;font-size:11px;">${fmtMcap(mcapCache[r.ticker])}</div></td>
       <td>${fieldText(q, id, "offering_type", r.offering_type, "text-short")}</td>
       <td>${fieldDate(q, id, "period_ending", r.period_ending)}</td>
-      <td>${booleanSelect(q, id, "done", doneAttr)}</td>
+      ${reviewMode !== "ticker" ? `<td>${booleanSelect(q, id, "done", doneAttr)}</td>` : ""}
       <td>${fieldText(q, id, "disclosure_type", r.disclosure_type, "text-short")}</td>
       <td>${fieldText(q, id, "headline", r.headline, "text-mid")}</td>
       <td>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details, "text-long")}</td>
@@ -2457,8 +2470,8 @@ OFFERINGS_QUEUE.renderPanel = function (r) {
         <div class="panel-section">
           <h4>Key Details</h4>
           <div class="panel-fields">
-            <div class="label">Done</div>
-            <div>${booleanSelect(q, id, "done", doneAttr)}</div>
+            ${reviewMode !== "ticker" ? `<div class="label">Done</div>
+            <div>${booleanSelect(q, id, "done", doneAttr)}</div>` : ""}
             <div class="label">Ticker</div>
             <div>${fieldText(q, id, "ticker", r.ticker)}</div>
             <div class="label">Headline</div>
