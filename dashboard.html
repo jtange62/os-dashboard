@@ -720,6 +720,21 @@ const fmtPctFrac = (p) => {
   const v = num(p);
   return v == null ? "—" : (v * 100).toFixed(2) + "%";
 };
+const fmtMillions = (n) => {
+  const v = num(n);
+  if (v == null) return "—";
+  return (v / 1e6).toFixed(1) + "M";
+};
+// Signed % difference of test vs actual, rounded to whole percent.
+// Returns { pct: Number, label: "+30%" } or null if either side is missing/zero.
+const pctDiff = (test, actual) => {
+  const t = num(test), a = num(actual);
+  if (t == null || a == null || a === 0) return null;
+  const pct = ((t - a) / Math.abs(a)) * 100;
+  const rounded = Math.round(pct);
+  return { pct, label: (rounded > 0 ? "+" : "") + rounded + "%" };
+};
+const CHECK_THRESHOLD = 20; // percent
 const fmtDate = (d) => d ? String(d).slice(0, 10) : "—";
 const fmtDateTime = (d) => d ? new Date(d).toLocaleString() : "—";
 const escapeHtml = (s) => s == null ? "" : String(s)
@@ -1861,6 +1876,7 @@ function renderReviewTable(rows) {
           ${dateSortHeader("Filed", "filed_at")}
           <th>Category</th>
           <th>AI</th>
+          <th class="num" title="test_outstanding / test_float vs OS final / Tradable final">Check</th>
           <th class="num">OS (raw)</th>
           <th class="num">OS Reported</th>
           ${sortHeader("OS Final", "outstanding_shares_final")}
@@ -1902,6 +1918,21 @@ function renderReviewRow(r) {
     return `<input type="text" inputmode="decimal" class="editable num" data-url="${escapeHtml(url)}" data-field="${col}" value="${escapeHtml(display)}" />`;
   };
 
+  const osDiff = pctDiff(r.test_outstanding, r.outstanding_shares_final);
+  const flDiff = pctDiff(r.test_float, r.tradable_float_final);
+  const osDiffBad = osDiff && Math.abs(osDiff.pct) > CHECK_THRESHOLD;
+  const flDiffBad = flDiff && Math.abs(flDiff.pct) > CHECK_THRESHOLD;
+  const checkValues = (r.test_outstanding == null && r.test_float == null)
+    ? "—"
+    : `${fmtMillions(r.test_outstanding)}/${fmtMillions(r.test_float)}`;
+  const checkDiff = (osDiff || flDiff)
+    ? `<div class="sub" style="font-size:11px;">`
+      + `<span${osDiffBad ? ` style="color:var(--red);font-weight:600;"` : ""}>${osDiff ? osDiff.label : "—"}</span>`
+      + `/`
+      + `<span${flDiffBad ? ` style="color:var(--red);font-weight:600;"` : ""}>${flDiff ? flDiff.label : "—"}</span>`
+      + `</div>`
+    : "";
+
   return `
     <tr class="${stale ? "stale-row " : ""}${pinned ? "pinned" : ""}" data-url="${escapeHtml(url)}">
       <td class="row-key">
@@ -1916,6 +1947,7 @@ function renderReviewRow(r) {
       <td>${fmtDate(r.filed_at)}</td>
       <td class="note">${escapeHtml(r.category || "")}</td>
       <td>${aiTierHtml(r.ai_analysis)}</td>
+      <td class="num">${checkValues}${checkDiff}</td>
       <td>${numInput("outstanding_shares", r.outstanding_shares)}</td>
       <td>${numInput("outstanding_shares_reported", r.outstanding_shares_reported)}</td>
       <td class="num ${osBad ? "bad" : ""}">${fmtInt(r.outstanding_shares_final)}</td>
@@ -2268,6 +2300,24 @@ function renderReviewPanel(r) {
             <div class="value ${floatBad ? "bad" : ""}">${fmtInt(r.float_final)}${floatBad ? " · LOW" : ""}</div>
             <div class="label">Tradable Final</div>
             <div class="value ${tradBad ? "bad" : ""}">${fmtInt(r.tradable_float_final)}${tradBad ? " · LOW" : ""}</div>
+            ${(() => {
+              const osD = pctDiff(r.test_outstanding, r.outstanding_shares_final);
+              const flD = pctDiff(r.test_float, r.tradable_float_final);
+              const osBadDiff = osD && Math.abs(osD.pct) > CHECK_THRESHOLD;
+              const flBadDiff = flD && Math.abs(flD.pct) > CHECK_THRESHOLD;
+              const osVal = r.test_outstanding == null
+                ? `<span class="value" style="color:var(--muted);">No data</span>`
+                : `<span class="value${osBadDiff ? " bad" : ""}">${fmtInt(r.test_outstanding)}${osD ? ` <span class="sub" style="color:var(--muted);font-weight:400;">(${osD.label} vs OS Final)</span>` : ""}</span>`;
+              const flVal = r.test_float == null
+                ? `<span class="value" style="color:var(--muted);">No data</span>`
+                : `<span class="value${flBadDiff ? " bad" : ""}">${fmtInt(r.test_float)}${flD ? ` <span class="sub" style="color:var(--muted);font-weight:400;">(${flD.label} vs Tradable Final)</span>` : ""}</span>`;
+              return `
+                <div class="label">Test Outstanding</div>
+                <div>${osVal}</div>
+                <div class="label">Test Float</div>
+                <div>${flVal}</div>
+              `;
+            })()}
           </div>
         </div>
         <div class="panel-section">
@@ -2306,6 +2356,10 @@ function renderReviewPanel(r) {
         <div class="panel-section">
           <h4>AI Analysis <a href="#" id="ai-regenerate-btn" class="status" style="font-size:11px;margin-left:8px;text-decoration:underline;">Regenerate</a></h4>
           <div id="ai-analysis-body" class="ai-analysis-body">${renderAiAnalysis(r)}</div>
+        </div>
+        <div class="panel-section">
+          <h4>Recent Offerings</h4>
+          <div id="panel-offerings-body" class="status">Loading…</div>
         </div>
         <div class="panel-section">
           <h4>Source filing</h4>
@@ -2386,6 +2440,56 @@ function renderReviewPanel(r) {
         if (el) el.textContent = "—";
       });
   }
+
+  // Fetch 4 most-recent offerings for this ticker.
+  if (r.ticker) {
+    const ticker = r.ticker;
+    fetch(`/api/offerings?ticker=${encodeURIComponent(ticker)}&limit=4&page=1`)
+      .then((res) => res.json())
+      .then((d) => {
+        // Bail if user moved on to a different row.
+        const panel = document.getElementById("review-panel");
+        if (!panel.classList.contains("open") || panel.dataset.url !== url) return;
+        const body = document.getElementById("panel-offerings-body");
+        if (!body) return;
+        body.classList.remove("status");
+        body.innerHTML = renderPanelOfferings(d.results || []);
+      })
+      .catch((e) => {
+        const body = document.getElementById("panel-offerings-body");
+        if (body) body.innerHTML = `<div class="status" style="color:var(--red);">Failed: ${escapeHtml(e.message)}</div>`;
+      });
+  }
+}
+
+function renderPanelOfferings(rows) {
+  if (!rows.length) return `<div class="status">No recent offerings.</div>`;
+  const sorted = [...rows].sort((a, b) => String(b.filed_at || "").localeCompare(String(a.filed_at || ""))).slice(0, 4);
+  const fmtUsd = (v) => v == null ? "—" : "$" + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  return `
+    <table style="font-size:12px;">
+      <thead><tr>
+        <th>Filed</th>
+        <th>Headline</th>
+        <th class="num">Shares</th>
+        <th class="num">Price</th>
+        <th class="num">Amount</th>
+      </tr></thead>
+      <tbody>
+        ${sorted.map((o) => `
+          <tr>
+            <td>${fmtDate(o.filed_at)}</td>
+            <td>${o.askedgar_url
+              ? `<a href="${escapeHtml(o.askedgar_url)}" target="_blank" rel="noopener">${escapeHtml(o.headline || "—")}</a>`
+              : escapeHtml(o.headline || "—")}</td>
+            <td class="num">${fmtInt(o.shares_amount)}</td>
+            <td class="num">${o.share_price == null ? "—" : fmtUsd(o.share_price)}</td>
+            <td class="num">${o.offering_amount == null ? "—" : "$" + fmtInt(o.offering_amount)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
 }
 
 function panelNavigate(delta) {

@@ -78,6 +78,7 @@ HISTORICAL_COLUMNS = """
     outstanding_shares, outstanding_shares_final, outstanding_shares_reported,
     float, float_final,
     tradable_float, tradable_float_final,
+    test_outstanding, test_float,
     restricted_shares, affiliate_shares, five_percent_shareholders, insider_shares,
     affiliate_percent, insider_percent, institutions_percent,
     is_adr, ads_ratio, foreign_company, number_classes, classes_details,
@@ -97,6 +98,8 @@ REVIEW_COLUMNS = """
     hf.float_final,
     hf.tradable_float,
     hf.tradable_float_final,
+    hf.test_outstanding,
+    hf.test_float,
     hf.restricted_shares,
     hf.affiliate_shares,
     hf.date_final,
@@ -126,24 +129,44 @@ REVIEW_QUERY = f"""
     LEFT JOIN screener s ON s.ticker = hf.ticker
         AND s.exchange IN ('NASDAQ', 'NYSE', 'AMEX')
     WHERE
-        hf.form_type NOT LIKE '%%MANUAL%%'
-        AND hf.filed_at = %(filed_at)s
-        AND hf.ticker IS NOT NULL
+        hf.filed_at = %(filed_at)s
         AND (
-            -- Sub-500k finals bypass category AND exchange filters (most critical)
-            hf.outstanding_shares_final < 500000
-            OR hf.float_final < 500000
-            OR hf.tradable_float_final < 500000
-            -- Normal path: must be on major exchange + category match + under-10M or ADR
+            -- Test-value diff path: bypass every other filter when the
+            -- secondary extractor disagrees with our finals by >20 percent.
+            (
+                hf.test_outstanding IS NOT NULL
+                AND hf.outstanding_shares_final IS NOT NULL
+                AND hf.outstanding_shares_final <> 0
+                AND ABS(hf.test_outstanding - hf.outstanding_shares_final)
+                    > 0.20 * ABS(hf.outstanding_shares_final)
+            )
             OR (
-                s.ticker IS NOT NULL
-                AND hf.category ~ 'NEGATIVE_FLOAT|HIGH|CRITICAL|SHARES_DECREASED|SHARES_MISMATCH'
+                hf.test_float IS NOT NULL
+                AND hf.tradable_float_final IS NOT NULL
+                AND hf.tradable_float_final <> 0
+                AND ABS(hf.test_float - hf.tradable_float_final)
+                    > 0.20 * ABS(hf.tradable_float_final)
+            )
+            OR (
+                hf.form_type NOT LIKE '%%MANUAL%%'
+                AND hf.ticker IS NOT NULL
                 AND (
-                    hf.outstanding_shares_final < 10000000
-                    OR hf.float_final < 10000000
-                    OR hf.tradable_float_final < 10000000
-                    OR hf.ticker IN (
-                        SELECT DISTINCT ticker FROM historical_float_final WHERE is_adr = true
+                    -- Sub-500k finals bypass category AND exchange filters (most critical)
+                    hf.outstanding_shares_final < 500000
+                    OR hf.float_final < 500000
+                    OR hf.tradable_float_final < 500000
+                    -- Normal path: must be on major exchange + category match + under-10M or ADR
+                    OR (
+                        s.ticker IS NOT NULL
+                        AND hf.category ~ 'NEGATIVE_FLOAT|HIGH|CRITICAL|SHARES_DECREASED|SHARES_MISMATCH'
+                        AND (
+                            hf.outstanding_shares_final < 10000000
+                            OR hf.float_final < 10000000
+                            OR hf.tradable_float_final < 10000000
+                            OR hf.ticker IN (
+                                SELECT DISTINCT ticker FROM historical_float_final WHERE is_adr = true
+                            )
+                        )
                     )
                 )
             )
@@ -629,7 +652,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif ctx.get("filing_text_error"):
             sections.append("\n=== SOURCE FILING TEXT ===")
             sections.append(f"(failed to fetch: {ctx['filing_text_error']})")
-        sections.append("\n=== CURRENT PRICE / SCREENER ===")
+        sections.append(
+            "\n=== CURRENT PRICE / SCREENER (today's snapshot — NOT necessarily the truth for this row) ===\n"
+            "This is the most-recently-updated outstanding/float for the ticker. It is good background "
+            "context for sanity-checking magnitude, but it is NOT authoritative for the row under review:\n"
+            "  - The row may be MORE up-to-date than the screener if it reflects a fresh issuance from "
+            "    its source filing that hasn't propagated to the screener yet.\n"
+            "  - The row may be HISTORICAL (date_final well in the past), in which case the screener's "
+            "    current values say nothing about whether the row was correct as of date_final. For a "
+            "    historical row, only judge it against what was true on date_final (use the source filing, "
+            "    contemporaneous offerings/news, and adjacent historical_float records — not today's screener)."
+        )
         sections.append(json.dumps(ctx.get("screener"), default=_json_default, indent=2))
         sections.append("\n=== 5 MOST RECENT HISTORICAL FLOAT RECORDS (excluding this row) ===")
         sections.append(json.dumps(ctx.get("historical_float", []), default=_json_default, indent=2))
@@ -670,7 +703,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "If the numbers look like ADR-level counts (much smaller than expected given the company's market cap and share price), "
             "flag that the source filing may have reported ADR counts instead of ordinary shares.\n"
             "- Most important red flags: OS or float < 500k (especially < 100k or negative). "
-            "Negatives are almost always wrong, unless the company is a brand-new SPAC or similar.\n\n"
+            "Negatives are almost always wrong, unless the company is a brand-new SPAC or similar.\n"
+            "- CRITICAL: the SCREENER block is today's current values, not truth for this row. "
+            "Do NOT recommend changes by comparing the row to screener -- the row may legitimately be more "
+            "current than the screener (it can reflect a brand-new issuance from its source filing) OR "
+            "the row may be historical (date_final in the past). For a historical date_final, the question "
+            "is 'were these values correct AS OF date_final', so the screener's current snapshot is largely "
+            "irrelevant. Use the screener only as a rough magnitude sanity check (e.g. an obviously-wrong "
+            "10x discrepancy in either direction); do not flag a discrepancy 'because screener says X'.\n\n"
             "=== OUTPUT FORMAT (follow exactly) ===\n"
             "Use this exact structure with plain text (no markdown headers, no bold):\n\n"
             "TIER: <one of the following>\n"
