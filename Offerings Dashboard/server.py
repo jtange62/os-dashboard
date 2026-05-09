@@ -1347,7 +1347,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _forward(self, req):
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 data = self._decode_body(resp.read(), resp.headers.get("Content-Encoding"))
                 self.send_response(resp.status)
                 self.send_header(

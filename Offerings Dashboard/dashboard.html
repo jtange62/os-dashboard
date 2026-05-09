@@ -2080,7 +2080,7 @@ function renderReviewPanel(q, r) {
   if (q.key === "warrants" && r.ticker) {
     const wsEl = document.getElementById("panel-warrants-staging");
     if (wsEl) {
-      fetch(`/api/warrants-staging?ticker=${encodeURIComponent(r.ticker)}&exclude=${id}&filed_at=${encodeURIComponent(r.filed_at ? String(r.filed_at).slice(0,10) : "")}`)
+      (() => { const ac = new AbortController(); setTimeout(() => ac.abort(), 55000); return fetch(`/api/warrants-staging?ticker=${encodeURIComponent(r.ticker)}&exclude=${id}&filed_at=${encodeURIComponent(r.filed_at ? String(r.filed_at).slice(0,10) : "")}`, {signal: ac.signal}); })()
         .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
         .then(data => {
           const rows = (data.results || []);
@@ -2136,14 +2136,14 @@ function renderReviewPanel(q, r) {
             });
           });
         })
-        .catch(() => { wsEl.textContent = "Failed to load."; });
+        .catch(e => { wsEl.textContent = `Failed to load: ${e.name === "AbortError" ? "timeout" : e.message}`; });
     }
   }
   // Fetch recent dilution data for warrants panel
   if (q.key === "warrants" && r.ticker) {
     const ddEl = document.getElementById("panel-recent-dilution");
     if (ddEl) {
-      fetch(`/api/dilution-data-advanced?ticker=${encodeURIComponent(r.ticker)}&limit=4&page=1`)
+      (() => { const ac = new AbortController(); setTimeout(() => ac.abort(), 55000); return fetch(`/api/dilution-data-advanced?ticker=${encodeURIComponent(r.ticker)}&limit=4&page=1`, {signal: ac.signal}); })()
         .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
         .then(data => {
           const rows = (data.results || []);
@@ -2164,14 +2164,14 @@ function renderReviewPanel(q, r) {
               <td style="padding:2px 3px;text-align:right;">${abbr(d.offering_amount)}</td>
             </tr>`).join("")}</tbody></table>`;
         })
-        .catch(() => { ddEl.textContent = "Failed to load."; });
+        .catch(e => { ddEl.textContent = `Failed to load: ${e.name === "AbortError" ? "timeout" : e.message}`; });
     }
   }
   // Fetch recent staging rows for the panel
   if (q.key === "offerings" && r.ticker) {
     const stEl = document.getElementById("panel-recent-staging");
     if (stEl) {
-      fetch(`/api/staging-rows?ticker=${encodeURIComponent(r.ticker)}&exclude=${id}&filed_at=${encodeURIComponent(r.filed_at ? String(r.filed_at).slice(0,10) : "")}`)
+      (() => { const ac = new AbortController(); setTimeout(() => ac.abort(), 55000); return fetch(`/api/staging-rows?ticker=${encodeURIComponent(r.ticker)}&exclude=${id}&filed_at=${encodeURIComponent(r.filed_at ? String(r.filed_at).slice(0,10) : "")}`, {signal: ac.signal}); })()
         .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
         .then(data => {
           const rows = (data.results || []);
@@ -2226,14 +2226,14 @@ function renderReviewPanel(q, r) {
             });
           });
         })
-        .catch(() => { stEl.textContent = "Failed to load."; });
+        .catch(e => { stEl.textContent = `Failed to load: ${e.name === "AbortError" ? "timeout" : e.message}`; });
     }
   }
   // Fetch recent offerings for the panel
   if (q.key === "offerings" && r.ticker) {
     const roEl = document.getElementById("panel-recent-offerings");
     if (roEl) {
-      fetch(`/api/offerings-advanced?ticker=${encodeURIComponent(r.ticker)}&limit=3&page=1`)
+      (() => { const ac = new AbortController(); setTimeout(() => ac.abort(), 55000); return fetch(`/api/offerings-advanced?ticker=${encodeURIComponent(r.ticker)}&limit=3&page=1`, {signal: ac.signal}); })()
         .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.json(); })
         .then(data => {
           const rows = (data.results || []);
@@ -2251,7 +2251,7 @@ function renderReviewPanel(q, r) {
               <td style="padding:2px 4px;text-align:right;">${o.offering_amount != null ? "$" + Number(o.offering_amount).toLocaleString() : "—"}</td>
             </tr>`).join("")}</tbody></table>`;
         })
-        .catch(() => { roEl.textContent = "Failed to load."; });
+        .catch(e => { roEl.textContent = `Failed to load: ${e.name === "AbortError" ? "timeout" : e.message}`; });
     }
   }
   document.querySelector("#review-panel .panel-card").scrollTop = 0;
