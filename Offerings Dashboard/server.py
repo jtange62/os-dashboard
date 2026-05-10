@@ -953,6 +953,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not ticker:
             self._send_json(400, {"status": "error", "error": {"code": "no_ticker", "message": "row has no ticker"}})
             return
+        if not (row.get("owners_two") or "").strip():
+            self._send_json(400, {"status": "error", "error": {"code": "no_owners_two", "message": "row has no owners_two label — extractor hasn't categorized it yet"}})
+            return
 
         try:
             ctx = Handler._gather_warrants_ai_context(ticker, row)

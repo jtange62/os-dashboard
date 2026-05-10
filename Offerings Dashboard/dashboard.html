@@ -2085,7 +2085,7 @@ function renderReviewPanel(q, r) {
   if (q.key === "offerings" && !r.doublecheck) {
     triggerAiAnalysis(q, id, false);
   }
-  if (q.key === "warrants" && !r.doublecheck && !((r.owners_two || "").includes("NOT WARRANT OR CONVERTIBLE"))) {
+  if (q.key === "warrants" && !r.doublecheck && r.owners_two && !r.owners_two.includes("NOT WARRANT OR CONVERTIBLE")) {
     triggerAiAnalysis(q, id, false);
   }
   // Fetch recent warrants staging rows for the panel
