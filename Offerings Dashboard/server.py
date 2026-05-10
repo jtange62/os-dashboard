@@ -223,6 +223,7 @@ WARRANTS_EDITABLE_COLUMNS = {
     "file_no": "text",
     "document_url": "text",
     "filed_at": "date",
+    "doublecheck": "text",
 }
 
 WARRANTS_REVIEW_COLUMNS = """
@@ -255,6 +256,7 @@ WARRANTS_REVIEW_COLUMNS = """
     document_url,
     file_no,
     notes,
+    doublecheck,
     updated_at
 """
 
@@ -430,6 +432,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._handle_warrants_create()
             elif url.path == "/api/ai-analyze":
                 self._handle_ai_analyze()
+            elif url.path == "/api/warrants/ai-analyze":
+                self._handle_warrants_ai_analyze()
             else:
                 self.send_error(404, "Not Found")
         except Exception as e:
@@ -916,6 +920,55 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             conn.commit()
         self._send_json(200, {"status": "success", "cached": False, "analysis": analysis})
 
+    def _handle_warrants_ai_analyze(self):
+        if not ANTHROPIC_KEY:
+            self._send_json(500, {"status": "error", "error": {"code": "no_anthropic_key", "message": "anthropic_api_key missing in config.json"}})
+            return
+        body = self._read_json_body()
+        row_id = body.get("id")
+        force = bool(body.get("force"))
+        if row_id is None or row_id == "":
+            self._send_json(400, {"status": "error", "error": {"code": "missing_pk", "message": "id required"}})
+            return
+        try:
+            row_id = int(row_id)
+        except (TypeError, ValueError):
+            self._send_json(400, {"status": "error", "error": {"code": "bad_id", "message": "id must be integer"}})
+            return
+
+        with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"SELECT {WARRANTS_REVIEW_COLUMNS} FROM warrants_convertibles4 WHERE id = %s",
+                (row_id,),
+            )
+            row = cur.fetchone()
+        if not row:
+            self._send_json(404, {"status": "error", "error": {"code": "not_found", "message": "row not found"}})
+            return
+        if row.get("doublecheck") and not force:
+            self._send_json(200, {"status": "success", "cached": True, "analysis": row["doublecheck"]})
+            return
+
+        ticker = (row.get("ticker") or "").upper()
+        if not ticker:
+            self._send_json(400, {"status": "error", "error": {"code": "no_ticker", "message": "row has no ticker"}})
+            return
+
+        try:
+            ctx = Handler._gather_warrants_ai_context(ticker, row)
+            analysis = Handler._call_anthropic_warrants(row, ctx)
+        except Exception as e:
+            self._send_json(502, {"status": "error", "error": {"code": "analyzer_failed", "message": str(e)}})
+            return
+
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE warrants_convertibles4 SET doublecheck = %s, updated_at = NOW() WHERE id = %s",
+                (analysis, row_id),
+            )
+            conn.commit()
+        self._send_json(200, {"status": "success", "cached": False, "analysis": analysis})
+
     @staticmethod
     def _askedgar_get(path, params):
         qs = urllib.parse.urlencode(params)
@@ -1301,6 +1354,286 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 text_parts.append(block["text"])
         return ("\n".join(text_parts)).strip() or "(no analysis returned)"
 
+    # ----------------- Warrants & Convertibles AI doublecheck -----------------
+    @staticmethod
+    def _gather_warrants_ai_context(ticker, row):
+        ctx = {}
+        # Filing text — extract the real filing URL from askedgar_url
+        filing_url = Handler._extract_filing_url(row.get("askedgar_url"))
+        if filing_url:
+            try:
+                txt = Handler._get_filing_text(filing_url)
+                if txt:
+                    ctx["filing_text"] = txt
+            except Exception as e:
+                ctx["filing_text_error"] = str(e)
+
+        # Recent dilution data (warrants & convertibles) for this ticker
+        try:
+            dil = Handler._askedgar_get("/v1/dilution-data-advanced", {"ticker": ticker, "limit": 5, "page": 1})
+            ctx["recent_dilution"] = (dil or {}).get("results") or []
+        except Exception as e:
+            ctx["recent_dilution_error"] = str(e)
+
+        # Staging rows from warrants_convertibles4 not yet committed to warrants_convertibles3
+        # Skipped on Mondays — weekend commit catches up so no gap exists.
+        today = datetime.datetime.now(CHICAGO).date()
+        if today.weekday() != 0:
+            row_id = row.get("id")
+            yesterday = today - datetime.timedelta(days=1)
+            try:
+                with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute(
+                        "SELECT id, details, owners_two, filed_at, "
+                        "       selling_shareholder_details, registered, "
+                        "       warrants_amount, warrants_exercise_price, prefunded_cost, "
+                        "       conversion_price, offering_amount, owners, bank "
+                        "FROM warrants_convertibles4 c "
+                        "WHERE c.ticker = %s "
+                        "  AND c.id != %s "
+                        "  AND c.filed_at >= %s "
+                        "  AND c.details IS NOT NULL "
+                        "  AND c.owners_two IS NOT NULL "
+                        "  AND NOT EXISTS ("
+                        "      SELECT 1 FROM warrants_convertibles3 a "
+                        "      WHERE a.document_url = c.document_url"
+                        "  ) "
+                        "ORDER BY c.filed_at DESC LIMIT 10",
+                        (ticker, row_id, yesterday),
+                    )
+                    ctx["staging_rows"] = cur.fetchall()
+            except Exception as e:
+                ctx["staging_rows_error"] = str(e)
+
+        return ctx
+
+    @staticmethod
+    def _call_anthropic_warrants(row, ctx):
+        sections = []
+
+        # --- Extracted data with field descriptions ---
+        sections.append("=== EXTRACTED DATA (the row being reviewed) ===")
+        sections.append("Field descriptions:")
+        sections.append("- ticker: stock ticker")
+        sections.append("- form_type: SEC form type")
+        sections.append("- details: brief name/description of the derivative")
+        sections.append("- verified: human analyst's verification flag (NULL means unverified)")
+        sections.append("- selling_shareholder_details: brief summary of THIS instrument's issuance (NOT about who is selling)")
+        sections.append("- owners_two: duplicate/registration/adjustment label (the field you're verifying in section B)")
+        sections.append("- registered: 'Registered' / 'Not Registered' / 'Pending Effect'")
+        sections.append("- warrants_amount, warrants_exercise_price, prefunded_cost: warrant fields (null for non-warrants)")
+        sections.append("- warrants_remaining: derived; informational context")
+        sections.append("- conversion_price, convertible_debt_remaining: convertible fields (null for non-convertibles)")
+        sections.append("- offering_amount: closed tranche amount associated with this instrument")
+        sections.append("- exercisable_date / expiration_date: warrant lifecycle dates")
+        sections.append("- convertible_date / maturity_date: convertible lifecycle dates")
+        sections.append("- owners: named entities acquiring this instrument")
+        sections.append("- bank: facilitator (placement agent, underwriter, etc.)")
+        sections.append("- pp_clause / price_protection: price-protection / adjustment language")
+        sections.append("- summary, notes: free text fields")
+        sections.append("- filed_at: date the filing was made")
+        sections.append("")
+        row_clean = {k: v for k, v in row.items() if k not in ("doublecheck", "updated_at")}
+        sections.append(json.dumps(row_clean, default=_json_default, indent=2))
+
+        # --- Filing text ---
+        if ctx.get("filing_text"):
+            sections.append("\n=== ORIGINAL FILING TEXT (the raw source document) ===")
+            sections.append(ctx["filing_text"])
+        elif ctx.get("filing_text_error"):
+            sections.append("\n=== ORIGINAL FILING TEXT ===")
+            sections.append(f"(failed to fetch: {ctx['filing_text_error']})")
+        else:
+            sections.append("\n=== ORIGINAL FILING TEXT ===")
+            sections.append("(not available — Elasticsearch not configured)")
+
+        # --- Historical data (recent warrants & convertibles for this ticker) ---
+        sections.append("\n=== HISTORICAL DATA: 5 MOST RECENT WARRANTS & CONVERTIBLES (from /v1/dilution-data-advanced) ===")
+        sections.append("(These are the most recent dilution data entries for this ticker. Use them for duplicate / adjustment / registration detection.)")
+        sections.append(json.dumps(ctx.get("recent_dilution", []), default=_json_default, indent=2))
+
+        # --- Staging rows (not yet committed to production) ---
+        staging = ctx.get("staging_rows", [])
+        if staging:
+            sections.append("\n=== STAGING ROWS (pending commit — not yet in warrants_convertibles3) ===")
+            sections.append(
+                "(These rows are in warrants_convertibles4 and have not yet been committed to "
+                "warrants_convertibles3. Treat them the same as historical entries for duplicate detection.)"
+            )
+            sections.append(json.dumps(staging, default=_json_default, indent=2))
+
+        user_content = "\n".join(sections)
+
+        system_prompt = (
+            "You are a senior data quality analyst reviewing SEC filing data that has been extracted "
+            "by an AI and reviewed by a human data specialist. Your job is to double-check everything.\n\n"
+            "You will receive:\n"
+            "1. The ORIGINAL FILING TEXT (the raw source document)\n"
+            "2. The EXTRACTED DATA (a row from warrants_convertibles4)\n"
+            "3. HISTORICAL DATA (recent warrants & convertibles for this ticker)\n"
+            "4. STAGING ROWS (if any) — recently processed rows not yet committed to production; "
+            "treat these the same as historical entries for duplicate detection\n\n"
+
+            "## A) EXTRACTION ACCURACY\n"
+            "You do NOT need to check every field. Focus on **amounts, prices, owners, and bank**. "
+            "Do NOT review `details`, `pp_clause`, or `price_protection` for general accuracy — those may "
+            "carry context from filings outside this prompt.\n\n"
+            "**Only flag issues that are materially wrong.** Do NOT flag:\n"
+            "- Minor rounding differences (e.g., $0.65 vs $0.66)\n"
+            "- Trivial discrepancies that don't change the meaning\n"
+            "- Edge cases where either interpretation is defensible\n\n"
+
+            "**Asymmetric rule for pp_clause and price_protection:**\n"
+            "- Missing from extraction AND present in the filing text → FLAG (pull it in).\n"
+            "- Missing from extraction AND not in the filing text → do not flag.\n"
+            "- Present in extraction but not in the filing text → do not flag (it likely came from a related filing).\n\n"
+
+            "### warrants_amount\n"
+            "- Number of warrants. Pre-funded warrants count as warrants here (NOT shares).\n"
+            "- If not stated explicitly but defined as a percentage of conversion shares or offering shares, calculate it: "
+            "(1) use the closed tranche amount (not 'up to'), (2) divide by conversion price to get base shares, (3) apply the percentage. "
+            "**Append the calculation to `pp_clause`** (do not replace existing pp_clause text).\n"
+            "- MUST be null for convertible notes, convertible preferred stock, and other non-warrant instruments. "
+            "The number of shares a convertible could convert into is NOT a warrant amount.\n\n"
+
+            "### warrants_exercise_price\n"
+            "- Exercise price per warrant in USD. Convert from foreign currency.\n"
+            "- MUST be null for non-warrant instruments.\n\n"
+
+            "### prefunded_cost\n"
+            "- Purchase price per pre-funded warrant in USD (NOT the nominal exercise price). Convert from foreign currency.\n"
+            "- null if not pre-funded warrants.\n\n"
+
+            "### conversion_price\n"
+            "- Conversion price for convertible instruments in USD. Convert from foreign currency.\n"
+            "- Use the stated FIXED conversion price or floor price. Do NOT use variable/formula-based prices. "
+            "If only a variable price with a floor exists, use the floor here and put the variable formula in pp_clause.\n"
+            "- null for non-convertible instruments.\n\n"
+
+            "### offering_amount\n"
+            "- Dollar amount associated with this instrument that has ACTUALLY CLOSED (no 'up to' amounts; closed tranche only).\n"
+            "  - Convertible notes: principal of the closed tranche only.\n"
+            "  - Warrants: amount of the offering or private placement that the warrants were issued in (closed tranche only).\n"
+            "  - Convertible preferred stock: total value of shares issued / offering amount associated with the preferred.\n"
+            "- null if not applicable.\n\n"
+
+            "### owners\n"
+            "- Names of entities acquiring this specific instrument, comma-separated.\n"
+            "- null if not specified. Do NOT include unnamed entities like 'institutional investors' or 'other investors' "
+            "unless the filing indicates they are foreign or of a specific country.\n\n"
+
+            "### bank\n"
+            "- Underwriter, placement agent, sales agent, etc. that facilitated THIS instrument (only if different from the main offering bank).\n"
+            "- null if same as the offering bank or not specified.\n\n"
+
+            "### registered\n"
+            "- One of 'Registered', 'Not Registered', or 'Pending Effect'.\n"
+            "  - 'Registered' if the filing references a registration statement that has been declared effective "
+            "(usually phrased as 'offered pursuant to a registration statement that was declared effective' and/or cites a 'File No.').\n"
+            "  - 'Pending Effect' if form_type is a registration filing (S-1, F-1, S-3, F-3, F-10) AND/OR owners_two says POTENTIAL REGISTRATION.\n"
+            "  - 'Not Registered' otherwise.\n\n"
+
+            "## B) DUPLICATE LABEL ACCURACY\n"
+            "The `owners_two` field carries the duplicate label. It also flags potential adjustments to warrant/convertible amounts, "
+            "exercise prices, conversion prices, or conversion/exercise terms. Verify the label against the historical and staging entries. "
+            "The extractor was instructed to choose ONE of: 'POTENTIAL DUPLICATE', 'POTENTIAL REGISTRATION', 'POTENTIAL ADJUSTMENT', "
+            "'NOT WARRANT OR CONVERTIBLE', or 'NEW WARRANT OR CONVERTIBLE', plus a short explanation that includes the relevant date(s).\n\n"
+
+            "1) **POTENTIAL DUPLICATE** — substantially similar to one or more historical entries. "
+            "Identified by matching warrants_amount + warrants_exercise_price (warrants), or matching conversion_price + offering_amount "
+            "(convertibles). For warrants, IGNORE offering_amount and convertible_debt_remaining when comparing. "
+            "If the security title matches a historical entry, it is almost certainly a POTENTIAL DUPLICATE — UNLESS the filing "
+            "specifically says the exercise price, conversion price, warrant amount, or offering amount has changed (then it's POTENTIAL ADJUSTMENT). "
+            "Cite the matching historical entry's title, date, and matching fields.\n\n"
+
+            "2) **POTENTIAL REGISTRATION** — substantially similar to a historical entry but the current row appears to be REGISTERING "
+            "the existing warrant/convertible. Often identified by matching details PLUS form_type of S-1, F-1, S-3, F-3, or F-10. "
+            "Cite the date of the historical entry being registered.\n\n"
+
+            "3) **POTENTIAL ADJUSTMENT** — the current row amends a historical entry's exercise price, conversion price, warrants_amount, "
+            "or convertible_debt_remaining; or warrants/convertibles are being exercised, converted, cancelled, or exchanged. "
+            "EXCLUDE standard proportional adjustments from a stock split or reverse split. Cite the historical entry's title, date, and what is being adjusted.\n\n"
+
+            "4) **NOT WARRANT OR CONVERTIBLE** — regardless of historical entries, this row is not actually a warrant or convertible security. "
+            "(Warrants are exercisable for shares; convertibles can be converted into shares — they generally have a warrant amount + exercise price, "
+            "or an offering amount + conversion price. If those are absent, the description or pp_clause must clearly identify it as a warrant or "
+            "convertible note/debt/preferred.)\n\n"
+
+            "5) **NEW WARRANT OR CONVERTIBLE** — substantially different from all historical entries and clearly a new warrant or convertible.\n\n"
+
+            "## C) DUPLICATE SOURCE PRIORITY\n"
+            "When multiple staging rows describe the same warrant series or convertible instrument, prefer the row with the most complete "
+            "extraction (most non-null fields, especially warrants_amount / warrants_exercise_price / conversion_price / offering_amount / owners). "
+            "Flag the less-complete row(s) as POTENTIAL DUPLICATE in the Analysis.\n\n"
+
+            "## D) FINANCIAL RESULTS / NO NEW ISSUANCE HANDLING\n"
+            "When the filing is a quarterly/annual financial report or a shareholder-vote filing — analogous to how the offerings pipeline "
+            "treats FINANCIAL/SHAREHOLDER RESULTS headlines — apply the following:\n"
+            "- If the filing DOES describe a NEW warrant/convertible (not already in historical or staging), "
+            "the `details` field should be the instrument name (e.g., 'Series A Warrants', 'Convertible Note'), NOT 'Financial Results'. "
+            "Flag this as a correction.\n"
+            "- If the filing only restates warrants/convertibles already in historical/staging (i.e., the row is a POTENTIAL DUPLICATE), "
+            "leave `details` as 'Financial Results' or 'No new issuance of derivatives'. Do NOT flag.\n\n"
+
+            "## Output format\n\n"
+            "Verified: True or False\n"
+            "  - True = the row warrants human action: either (a) commit as a new warrant/convertible, "
+            "(b) update an existing record because this row is a POTENTIAL REGISTRATION or POTENTIAL ADJUSTMENT of it, or "
+            "(c) extraction needs correction before any of the above.\n"
+            "  - False = no further action needed: NOT WARRANT OR CONVERTIBLE, or a clear POTENTIAL DUPLICATE already represented in the DB.\n\n"
+            "Status: OK or 'NEEDS ATTENTION'\n\n"
+            "Analysis: short description of why it's OK or needs attention. Cite specific historical entries by title + date when relevant.\n\n"
+            "Corrected / Missing Values:\n"
+            "(In bullet format, list both corrected values AND any priority-field values present in the filing text but missing from the "
+            "extraction. If no corrections, write: No corrections needed.)\n\n"
+
+            "## Example output\n"
+            "```\n"
+            "Verified: True\n"
+            "Status: NEEDS ATTENTION\n\n"
+            "Analysis: New private placement of pre-funded warrants closed 2026-04-15. warrants_amount (3,333,333) and "
+            "prefunded_cost ($1.4999) match the filing. offering_amount ($5,000,000) matches. owners and bank are stated in the "
+            "filing text but missing from the extraction. owners_two label 'NEW WARRANT OR CONVERTIBLE' is correct — no historical "
+            "entry has matching warrants_amount + prefunded_cost.\n\n"
+            "Corrected / Missing Values:\n"
+            "- owners: Armistice Capital, LLC (missing — found in filing)\n"
+            "- bank: H.C. Wainwright & Co. (missing — found in filing)\n"
+            "```\n\n"
+            "Keep the whole output compact — this displays inside a small side panel."
+        )
+
+        payload = {
+            "model": ANTHROPIC_MODEL,
+            "max_tokens": 16000,
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "high"},
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_content}],
+        }
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            ANTHROPIC_URL,
+            data=body,
+            headers={
+                "x-api-key": ANTHROPIC_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                resp_data = resp.read()
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            raise AnthropicError(e.code, err_body, e.headers)
+        parsed = json.loads(resp_data.decode("utf-8"))
+        text_parts = []
+        for block in parsed.get("content") or []:
+            if block.get("type") == "text" and block.get("text"):
+                text_parts.append(block["text"])
+        return ("\n".join(text_parts)).strip() or "(no analysis returned)"
+
     @staticmethod
     def _coerce(raw, kind):
         if raw is None or raw == "":
@@ -1397,6 +1730,8 @@ def _ensure_columns():
     stmts = [
         "ALTER TABLE offering_data_new_final_clone ADD COLUMN IF NOT EXISTS doublecheck TEXT",
         "ALTER TABLE all_financings_final ADD COLUMN IF NOT EXISTS doublecheck TEXT",
+        "ALTER TABLE warrants_convertibles4 ADD COLUMN IF NOT EXISTS doublecheck TEXT",
+        "ALTER TABLE warrants_convertibles3 ADD COLUMN IF NOT EXISTS doublecheck TEXT",
     ]
     try:
         with get_conn() as conn, conn.cursor() as cur:
@@ -1531,12 +1866,132 @@ def _bg_analyze_one(row_id, ticker, row, stop_event, attempt=0):
         return False
 
 
+# ---------------------------------------------------------------------------
+# Background analyzer — warrants_convertibles4
+# ---------------------------------------------------------------------------
+
+def _bg_warrants_log(msg):
+    ts = datetime.datetime.now(CHICAGO).strftime("%Y-%m-%d %H:%M:%S")
+    sys.stderr.write(f"[bg-warrants {ts}] {msg}\n")
+
+
+def _bg_warrants_analyze_loop(stop_event):
+    _bg_warrants_log("Started (interval=%ds, delay=%ds)" % (BG_INTERVAL, BG_DELAY_BETWEEN))
+    while not stop_event.is_set():
+        try:
+            _bg_warrants_run_batch(stop_event)
+        except Exception as e:
+            _bg_warrants_log(f"Batch error (will retry next cycle): {e}")
+        stop_event.wait(BG_INTERVAL)
+    _bg_warrants_log("Stopped.")
+
+
+def _bg_warrants_run_batch(stop_event):
+    today = datetime.datetime.now(CHICAGO).date()
+    yesterday = today - datetime.timedelta(days=1)
+
+    sql = f"""
+        SELECT {WARRANTS_REVIEW_COLUMNS}
+        FROM warrants_convertibles4
+        WHERE filed_at IN (%(today)s, %(yesterday)s)
+          AND doublecheck IS NULL
+          AND details IS NOT NULL
+          AND owners_two IS NOT NULL
+          AND owners_two NOT LIKE %(skip)s
+        ORDER BY filed_at DESC, id ASC
+    """
+    try:
+        with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, {
+                "today": today,
+                "yesterday": yesterday,
+                "skip": "%NOT WARRANT OR CONVERTIBLE%",
+            })
+            rows = cur.fetchall()
+    except Exception as e:
+        _bg_warrants_log(f"DB query failed: {e}")
+        return
+
+    if not rows:
+        _bg_warrants_log("No un-analyzed rows found.")
+        return
+
+    _bg_warrants_log(f"Found {len(rows)} rows to analyze.")
+    analyzed = 0
+    errors = 0
+
+    for i, row in enumerate(rows):
+        if stop_event.is_set():
+            _bg_warrants_log("Stop requested, aborting batch.")
+            return
+
+        row_id = row["id"]
+        ticker = (row.get("ticker") or "").upper()
+        if not ticker:
+            _bg_warrants_log(f"  [{i+1}/{len(rows)}] id={row_id} — skipped (no ticker)")
+            continue
+
+        _bg_warrants_log(f"  [{i+1}/{len(rows)}] {ticker} id={row_id}")
+        success = _bg_warrants_analyze_one(row_id, ticker, row, stop_event)
+        if success:
+            analyzed += 1
+        else:
+            errors += 1
+
+        if i < len(rows) - 1 and not stop_event.is_set():
+            stop_event.wait(BG_DELAY_BETWEEN)
+
+    _bg_warrants_log(f"Batch complete: analyzed={analyzed} errors={errors} total={len(rows)}")
+
+
+def _bg_warrants_analyze_one(row_id, ticker, row, stop_event, attempt=0):
+    try:
+        ctx = Handler._gather_warrants_ai_context(ticker, row)
+        analysis = Handler._call_anthropic_warrants(row, ctx)
+    except AnthropicError as e:
+        is_rate_limit = e.code in (429, 529) or (e.code == 502 and "rate_limit" in e.body)
+        if is_rate_limit and attempt < BG_MAX_RETRIES:
+            backoff = min(BG_INITIAL_BACKOFF * (2 ** attempt), BG_MAX_BACKOFF)
+            if e.headers:
+                retry_after = e.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        backoff = max(backoff, int(retry_after))
+                    except ValueError:
+                        pass
+            _bg_warrants_log(f"    Rate limited ({e.code}), retry {attempt+1}/{BG_MAX_RETRIES} in {backoff}s")
+            if stop_event.wait(backoff):
+                return False
+            return _bg_warrants_analyze_one(row_id, ticker, row, stop_event, attempt + 1)
+        _bg_warrants_log(f"    FAILED ({e.code}): {e.body[:200]}")
+        return False
+    except Exception as e:
+        _bg_warrants_log(f"    FAILED: {e}")
+        return False
+
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE warrants_convertibles4 "
+                "SET doublecheck = %s, updated_at = NOW() "
+                "WHERE id = %s AND doublecheck IS NULL",
+                (analysis, row_id),
+            )
+            conn.commit()
+        _bg_warrants_log(f"    OK")
+        return True
+    except Exception as e:
+        _bg_warrants_log(f"    DB save failed: {e}")
+        return False
+
+
 def main():
     _ensure_columns()
 
-    # Start background analyzer thread (only if Anthropic key is configured)
+    # Start background analyzer threads (only if Anthropic key is configured)
     stop_event = threading.Event()
     bg_thread = None
+    bg_warrants_thread = None
     if ANTHROPIC_KEY:
         bg_thread = threading.Thread(
             target=_bg_analyze_loop,
@@ -1545,13 +2000,20 @@ def main():
             daemon=True,
         )
         bg_thread.start()
+        bg_warrants_thread = threading.Thread(
+            target=_bg_warrants_analyze_loop,
+            args=(stop_event,),
+            name="bg-warrants-analyzer",
+            daemon=True,
+        )
+        bg_warrants_thread.start()
     else:
-        sys.stderr.write("[server] anthropic_api_key not set, background analyzer disabled.\n")
+        sys.stderr.write("[server] anthropic_api_key not set, background analyzers disabled.\n")
 
     with ReusableTCPServer(("127.0.0.1", PORT), Handler) as httpd:
         print(f"Offerings Dashboard running at http://localhost:{PORT}/")
         if bg_thread:
-            print("Background analyzer active (30-min interval).")
+            print("Background analyzers active (offerings + warrants, 30-min interval).")
         print("Press Ctrl+C to stop.")
         try:
             httpd.serve_forever()
@@ -1560,6 +2022,8 @@ def main():
             stop_event.set()
             if bg_thread:
                 bg_thread.join(timeout=5)
+            if bg_warrants_thread:
+                bg_warrants_thread.join(timeout=5)
             print("Done.")
 
 

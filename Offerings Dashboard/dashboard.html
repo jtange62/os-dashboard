@@ -1257,6 +1257,7 @@ const OFFERINGS_QUEUE = {
   statusUrlParam: "rdone",
   serverParam: "done",
   defaultStatus: "",
+  aiAnalyze: "/api/ai-analyze",
   numeric: ["offering_amount", "share_price", "conversion_price", "shares_amount", "warrants_amount", "warrants_exercise_price"],
   boolean: ["done"],
   text: ["ticker", "headline", "selling_shareholder_details", "commentary", "disclosure_type", "askedgar_url", "potential_owners", "bank", "form_type", "offering_type", "doublecheck"],
@@ -1293,9 +1294,10 @@ const WARRANTS_QUEUE = {
   statusUrlParam: "rverified",
   serverParam: "verified",
   defaultStatus: "",
+  aiAnalyze: "/api/warrants/ai-analyze",
   numeric: ["warrants_amount", "warrants_exercise_price", "warrants_remaining", "prefunded_cost", "offering_amount", "conversion_price", "convertible_debt_remaining"],
   boolean: ["verified"],
-  text: ["ticker", "form_type", "details", "selling_shareholder_details", "owners_two", "registered", "summary", "notes", "askedgar_url", "pp_clause", "price_protection", "owners", "bank", "document_url", "file_no"],
+  text: ["ticker", "form_type", "details", "selling_shareholder_details", "owners_two", "registered", "summary", "notes", "askedgar_url", "pp_clause", "price_protection", "owners", "bank", "document_url", "file_no", "doublecheck"],
   date: ["filed_at", "expiration_date", "exercisable_date", "maturity_date", "convertible_date"],
   clientFilters: [
     { id: "wf-owners2", label: "Category", field: "owners_two", mode: "prefix",
@@ -1305,6 +1307,13 @@ const WARRANTS_QUEUE = {
         "POTENTIAL DUPLICATE",
         "POTENTIAL ADJUSTMENT",
         "POTENTIAL REGISTRATION",
+      ] },
+    { id: "wf-doublecheck", label: "Doublecheck", field: "doublecheck", mode: "contains",
+      options: [
+        { label: "TRUE", match: "Verified: True" },
+        { label: "FALSE", match: "Verified: False" },
+        { label: "NEEDS ATTENTION", match: "NEEDS ATTENTION" },
+        { label: "OK", match: "Status: OK" },
       ] },
   ],
   rows: new Map(),
@@ -2076,6 +2085,9 @@ function renderReviewPanel(q, r) {
   if (q.key === "offerings" && !r.doublecheck) {
     triggerAiAnalysis(q, id, false);
   }
+  if (q.key === "warrants" && !r.doublecheck && !((r.owners_two || "").includes("NOT WARRANT OR CONVERTIBLE"))) {
+    triggerAiAnalysis(q, id, false);
+  }
   // Fetch recent warrants staging rows for the panel
   if (q.key === "warrants" && r.ticker) {
     const wsEl = document.getElementById("panel-warrants-staging");
@@ -2330,7 +2342,7 @@ async function triggerAiAnalysis(q, id, force) {
   if (!body) return;
   body.innerHTML = `<div class="ai-analysis-loading">Analyzing — please keep this panel open. May take 30–60s…</div>`;
   try {
-    const resp = await fetch("/api/ai-analyze", {
+    const resp = await fetch(q.aiAnalyze || "/api/ai-analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, force: !!force }),
@@ -2366,11 +2378,11 @@ OFFERINGS_QUEUE.renderTableHead = () => `
     <th>Offering Type</th>
     <th>Period Ending</th>
     ${reviewMode !== "ticker" ? "<th>Done</th>" : ""}
+    <th>Doublecheck</th>
     <th>Disclosure Type</th>
     <th>Headline</th>
     <th>Selling Shareholder</th>
     <th>Commentary</th>
-    <th>Doublecheck</th>
     <th class="num">Offering $</th>
     <th class="num">Share $</th>
     <th class="num">Conv $</th>
@@ -2402,11 +2414,11 @@ OFFERINGS_QUEUE.renderRow = function (r) {
       <td>${fieldText(q, id, "offering_type", r.offering_type, "text-short")}</td>
       <td>${fieldDate(q, id, "period_ending", r.period_ending)}</td>
       ${reviewMode !== "ticker" ? `<td>${booleanSelect(q, id, "done", doneAttr)}</td>` : ""}
+      <td class="ai-analysis-cell">${r.doublecheck ? (() => { const dc = r.doublecheck; const flag = /Done:\s*True/i.test(dc) && /NEEDS ATTENTION/i.test(dc); return `<span class="ai-truncated${flag ? " ai-flag" : ""}" title="${escapeHtml(dc)}">${escapeHtml(dc.substring(0, 80))}${dc.length > 80 ? "…" : ""}</span>`; })() : '<span class="muted">—</span>'}</td>
       <td>${fieldText(q, id, "disclosure_type", r.disclosure_type, "text-short")}</td>
       <td>${fieldText(q, id, "headline", r.headline, "text-mid")}</td>
       <td>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details, "text-long")}</td>
       <td>${fieldTextarea(q, id, "commentary", r.commentary, "text-long")}</td>
-      <td class="ai-analysis-cell">${r.doublecheck ? (() => { const dc = r.doublecheck; const flag = /Done:\s*True/i.test(dc) && /NEEDS ATTENTION/i.test(dc); return `<span class="ai-truncated${flag ? " ai-flag" : ""}" title="${escapeHtml(dc)}">${escapeHtml(dc.substring(0, 80))}${dc.length > 80 ? "…" : ""}</span>`; })() : '<span class="muted">—</span>'}</td>
       <td>${fieldNum(q, id, "offering_amount", r.offering_amount)}</td>
       <td>${fieldNum(q, id, "share_price", r.share_price)}</td>
       <td>${fieldNum(q, id, "conversion_price", r.conversion_price)}</td>
@@ -2516,6 +2528,7 @@ WARRANTS_QUEUE.renderTableHead = () => `
     <th>Ticker / Form</th>
     <th>Filed</th>
     <th>Verified</th>
+    <th>Doublecheck</th>
     <th>Summary</th>
     <th>Details</th>
     <th>Selling Shareholder</th>
@@ -2557,6 +2570,7 @@ WARRANTS_QUEUE.renderRow = function (r) {
       </td>
       <td>${fmtDate(r.filed_at)}<div style="color:#888;font-size:11px;">${fmtMcap(mcapCache[r.ticker])}</div></td>
       <td>${booleanSelect(q, id, "verified", verifiedAttr)}</td>
+      <td class="ai-analysis-cell">${r.doublecheck ? (() => { const dc = r.doublecheck; const flag = /Verified:\s*True/i.test(dc) && /NEEDS ATTENTION/i.test(dc); return `<span class="ai-truncated${flag ? " ai-flag" : ""}" title="${escapeHtml(dc)}">${escapeHtml(dc.substring(0, 80))}${dc.length > 80 ? "…" : ""}</span>`; })() : '<span class="muted">—</span>'}</td>
       <td>${fieldText(q, id, "summary", r.summary, "text-mid")}</td>
       <td>${fieldText(q, id, "details", r.details, "text-mid")}</td>
       <td>${fieldTextarea(q, id, "selling_shareholder_details", r.selling_shareholder_details, "text-long")}</td>
@@ -2659,6 +2673,14 @@ WARRANTS_QUEUE.renderPanel = function (r) {
         <div class="panel-section">
           <h4>Recent Dilution Data</h4>
           <div id="panel-recent-dilution" class="muted" style="font-size:12px;">Loading…</div>
+        </div>
+        <div class="panel-section">
+          <h4>AI Doublecheck
+            <a href="#" id="ai-regenerate-btn" class="status" style="font-size:11px;margin-left:8px;text-decoration:underline;">Regenerate</a>
+          </h4>
+          <div id="ai-analysis-body" class="ai-analysis-body">
+            ${renderAiAnalysis(r)}
+          </div>
         </div>
         <div class="panel-section">
           <h4>Source</h4>
