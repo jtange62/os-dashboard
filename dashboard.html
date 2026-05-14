@@ -626,6 +626,16 @@
       <button type="submit" class="primary" id="review-refresh">Refresh</button>
       <button type="button" class="secondary" id="review-today">Today</button>
       <button type="button" class="secondary" id="review-yesterday">Yesterday (CDT)</button>
+      <label style="margin-left:12px;">AI Tier:
+        <select id="review-tier-filter" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 6px;font-size:12px;">
+          <option value="all">All</option>
+          <option value="CRITICAL">Critical</option>
+          <option value="DISCREPANCY">Discrepancy</option>
+          <option value="MINOR">Minor</option>
+          <option value="NO CHANGE">No Change</option>
+          <option value="none">No analysis</option>
+        </select>
+      </label>
       <span id="review-summary" class="status" style="margin-left:auto;"></span>
     </form>
 
@@ -1622,6 +1632,7 @@ const EDITABLE_FIELDS = [...EDITABLE_NUM, "is_adr", "notes"];
 
 let reviewLoadedOnce = false;
 let reviewRowsByUrl = new Map();   // document_url -> row (server values)
+let reviewAllRows = [];             // unfiltered rows for client-side tier filter
 let dirtyByUrl = new Map();        // document_url -> { field: newValue }
 let staleUrls = new Set();         // pinned rows that didn't match the SQL filter
 
@@ -1701,6 +1712,9 @@ document.getElementById("review-today").addEventListener("click", () => {
   document.getElementById("review-date").value = fmt.format(new Date());
   loadReview();
 });
+document.getElementById("review-tier-filter").addEventListener("change", () => {
+  if (reviewAllRows.length) applyTierFilter();
+});
 document.getElementById("review-yesterday").addEventListener("click", () => {
   document.getElementById("review-date").value = chicagoYesterdayISO();
   loadReview();
@@ -1758,12 +1772,25 @@ async function loadReviewByDate() {
   }
   staleUrls = new Set(pinnedRows.map((r) => r.document_url));
 
-  const all = [...pinnedRows, ...main.results];
-  reviewRowsByUrl = new Map(all.map((r) => [r.document_url, r]));
+  reviewAllRows = [...pinnedRows, ...main.results];
   dirtyByUrl = new Map();
 
   summary.innerHTML = `<strong>${main.count}</strong> matching · <strong>${pinnedRows.length}</strong> pinned (filter changed) · filed_at <strong>${main.filed_at}</strong>`;
-  renderReviewTable(all);
+  applyTierFilter();
+}
+
+function applyTierFilter() {
+  const filter = document.getElementById("review-tier-filter").value;
+  let filtered;
+  if (filter === "all") {
+    filtered = reviewAllRows;
+  } else if (filter === "none") {
+    filtered = reviewAllRows.filter((r) => !aiTier(r.ai_analysis));
+  } else {
+    filtered = reviewAllRows.filter((r) => aiTier(r.ai_analysis) === filter);
+  }
+  reviewRowsByUrl = new Map(filtered.map((r) => [r.document_url, r]));
+  renderReviewTable(filtered);
 }
 
 async function loadReviewByLowFloat() {
