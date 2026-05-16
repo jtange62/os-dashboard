@@ -333,7 +333,7 @@
   .panel-wide .panel-card { width: 1200px; }
   .panel-two-col {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 2fr;
     gap: 0;
   }
   .panel-two-col > .panel-col {
@@ -352,8 +352,9 @@
     justify-content: space-between;
     gap: 10px;
   }
-  .panel-header h3 { margin: 0; font-size: 15px; font-weight: 600; }
-  .panel-header .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .panel-header h3 { margin: 0; font-size: 18px; font-weight: 600; }
+  .panel-header h3 .dl-icons a { font-size: 11px; padding: 2px 7px; }
+  .panel-header .meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
   .panel-section {
     padding: 14px 20px;
     border-bottom: 1px solid var(--border);
@@ -388,6 +389,11 @@
     width: 100%;
     box-sizing: border-box;
     text-align: left;
+  }
+  .editable-checkbox {
+    width: auto !important;
+    cursor: pointer;
+    transform: scale(1.3);
   }
   .panel-fields textarea.editable {
     width: 100%;
@@ -654,16 +660,19 @@
   <div class="panel-backdrop" data-panel-close></div>
   <div class="panel-card">
     <div class="panel-header">
-      <div>
+      <div style="min-width:0;">
         <h3 id="panel-title">—</h3>
+        <div class="meta" id="panel-headline" style="margin-top:3px;font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
         <div class="meta" id="panel-subtitle"></div>
       </div>
-      <div class="row-actions">
+      <div class="row-actions" style="flex-shrink:0;">
+        <span id="panel-meta-right" style="font-size:12px;color:var(--muted);margin-right:8px;"></span>
         <button type="button" class="close-btn" id="panel-prev" title="Previous (k / ↑)" aria-label="Previous row">↑</button>
         <span id="panel-position" class="status" style="font-size:11px;min-width:54px;text-align:center;"></span>
         <button type="button" class="close-btn" id="panel-next" title="Next (j / ↓)" aria-label="Next row">↓</button>
         <span style="width:8px;"></span>
         <button type="button" class="primary save-btn" id="panel-save" disabled>Save</button>
+        <button type="button" class="primary save-btn" id="panel-save-next" disabled>Save & Next</button>
         <button type="button" class="secondary" id="panel-revert">Revert</button>
         <button type="button" class="close-btn" data-panel-close title="Close (Esc)" aria-label="Close panel">×</button>
       </div>
@@ -1790,7 +1799,7 @@ function originalValueFor(q, id, field) {
 function isSameValue(q, a, b, field) {
   const t = fieldType(q, field);
   if (t === "boolean") {
-    const norm = (v) => v === true ? "true" : v === false ? "false" : (v == null || v === "") ? "" : String(v);
+    const norm = (v) => v === true || v === "true" ? "true" : "";
     return norm(a) === norm(b);
   }
   if (t === "text" || t === "date") {
@@ -1809,10 +1818,15 @@ function onEditableChange(el) {
   if (!q) return;
   const id = Number(el.dataset.id);
   const field = el.dataset.field;
-  const newVal = el.value;
+  const isCheckbox = el.type === "checkbox";
+  const newVal = isCheckbox ? (el.checked ? "true" : "") : el.value;
+  if (isCheckbox) el.value = newVal;
 
   inputsFor(q, id, field).forEach((other) => {
-    if (other !== el && other.value !== newVal) other.value = newVal;
+    if (other !== el) {
+      if (other.type === "checkbox") { other.checked = el.checked; other.value = newVal; }
+      else if (other.value !== newVal) other.value = newVal;
+    }
   });
 
   const orig = originalValueFor(q, id, field);
@@ -1841,6 +1855,10 @@ function updateSaveButtonsFor(q, id) {
     panelBtn.disabled = !hasDirty;
     panelBtn.classList.toggle("dirty", hasDirty);
     panelBtn.title = tip;
+    const panelBtnNext = document.getElementById("panel-save-next");
+    panelBtnNext.disabled = !hasDirty;
+    panelBtnNext.classList.toggle("dirty", hasDirty);
+    panelBtnNext.title = tip;
   }
   updateSaveAllButton();
 }
@@ -1892,7 +1910,12 @@ function bulkSetVisible() {
     if (Object.keys(bag).length) q.dirty.set(id, bag); else q.dirty.delete(id);
     // Update all matching inputs in the table
     inputsFor(q, id, field).forEach(el => {
-      el.value = newVal;
+      if (el.type === "checkbox") {
+        el.checked = newVal === "true";
+        el.value = newVal;
+      } else {
+        el.value = newVal;
+      }
       el.classList.toggle("dirty", dirty);
     });
     updateSaveButtonsFor(q, id);
@@ -2062,7 +2085,8 @@ function renderReviewPanel(q, r) {
   const bag = q.dirty.get(id) || {};
   for (const [field, val] of Object.entries(bag)) {
     inputsFor(q, id, field).forEach((el) => {
-      el.value = val;
+      if (el.type === "checkbox") { el.checked = val === "true"; el.value = val; }
+      else el.value = val;
       el.classList.add("dirty");
     });
   }
@@ -2290,6 +2314,15 @@ document.getElementById("panel-save").addEventListener("click", () => {
   const id = Number(panel.dataset.id);
   if (id && q) saveRow(q, id);
 });
+document.getElementById("panel-save-next").addEventListener("click", async () => {
+  const panel = document.getElementById("review-panel");
+  const q = QUEUES[panel.dataset.queue];
+  const id = Number(panel.dataset.id);
+  if (id && q) {
+    await saveRow(q, id);
+    if (!q.dirty.has(Number(id))) panelNavigate(1);
+  }
+});
 document.getElementById("panel-revert").addEventListener("click", () => {
   const panel = document.getElementById("review-panel");
   const q = QUEUES[panel.dataset.queue];
@@ -2318,11 +2351,8 @@ function fieldDate(q, id, col, val) {
   return `<input type="date" class="editable" data-queue="${q.key}" data-id="${id}" data-field="${col}" value="${escapeHtml(display)}" />`;
 }
 function booleanSelect(q, id, col, currentAttr) {
-  return `<select class="editable" data-queue="${q.key}" data-id="${id}" data-field="${col}">
-    <option value="" ${currentAttr === "" ? "selected" : ""}>—</option>
-    <option value="true" ${currentAttr === "true" ? "selected" : ""}>True</option>
-    <option value="false" ${currentAttr === "false" ? "selected" : ""}>False</option>
-  </select>`;
+  const isChecked = currentAttr === "true";
+  return `<input type="checkbox" class="editable editable-checkbox" data-queue="${q.key}" data-id="${id}" data-field="${col}" value="${isChecked ? "true" : ""}" ${isChecked ? "checked" : ""} />`;
 }
 
 // ====================================================================
@@ -2443,7 +2473,10 @@ OFFERINGS_QUEUE.renderPanel = function (r) {
   const doneAttr = r.done === true ? "true" : r.done === false ? "false" : "";
   document.getElementById("review-panel").classList.add("panel-wide");
   document.getElementById("panel-title").innerHTML =
-    `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span><span id="panel-staging-count" class="badge ins" style="margin-left:6px;display:none;"></span>`;
+    `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)}`;
+  document.getElementById("panel-headline").textContent = r.headline || "";
+  document.getElementById("panel-meta-right").innerHTML =
+    `<span class="form-pill">${escapeHtml(r.form_type || "—")}</span><span id="panel-staging-count" class="badge ins" style="margin-left:6px;display:none;"></span>`;
   document.getElementById("panel-subtitle").innerHTML = `<span style="color:#888;">Filed ${fmtDate(r.filed_at)} · ${fmtMcap(mcapCache[r.ticker])}</span>`;
   document.getElementById("panel-content").innerHTML = `
     <div class="panel-two-col">
@@ -2607,7 +2640,10 @@ WARRANTS_QUEUE.renderPanel = function (r) {
   const verifiedAttr = r.verified === true ? "true" : r.verified === false ? "false" : "";
   document.getElementById("review-panel").classList.add("panel-wide");
   document.getElementById("panel-title").innerHTML =
-    `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span><span id="panel-warrants-staging-count" class="badge ins" style="margin-left:6px;display:none;"></span>`;
+    `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)}`;
+  document.getElementById("panel-headline").textContent = r.summary || r.details || "";
+  document.getElementById("panel-meta-right").innerHTML =
+    `<span class="form-pill">${escapeHtml(r.form_type || "—")}</span><span id="panel-warrants-staging-count" class="badge ins" style="margin-left:6px;display:none;"></span>`;
   document.getElementById("panel-subtitle").innerHTML = `<span style="color:#888;">Filed ${fmtDate(r.filed_at)} · ${fmtMcap(mcapCache[r.ticker])}</span>`;
   document.getElementById("panel-content").innerHTML = `
     <div class="panel-two-col">
