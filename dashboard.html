@@ -626,6 +626,17 @@
       <button type="submit" class="primary" id="review-refresh">Refresh</button>
       <button type="button" class="secondary" id="review-today">Today</button>
       <button type="button" class="secondary" id="review-yesterday">Yesterday (CDT)</button>
+      <label style="margin-left:12px;">Category:
+        <select id="review-category-filter" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 6px;font-size:12px;">
+          <option value="all">All</option>
+          <option value="NEGATIVE_FLOAT">Negative Float</option>
+          <option value="CRITICAL">Critical</option>
+          <option value="HIGH">High</option>
+          <option value="SHARES_DECREASED">Shares Decreased</option>
+          <option value="SHARES_MISMATCH">Shares Mismatch</option>
+          <option value="other">Other (no keyword match)</option>
+        </select>
+      </label>
       <label style="margin-left:12px;">AI Tier:
         <select id="review-tier-filter" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 6px;font-size:12px;">
           <option value="all">All</option>
@@ -1713,7 +1724,10 @@ document.getElementById("review-today").addEventListener("click", () => {
   loadReview();
 });
 document.getElementById("review-tier-filter").addEventListener("change", () => {
-  if (reviewAllRows.length) applyTierFilter();
+  if (reviewAllRows.length) applyReviewFilters();
+});
+document.getElementById("review-category-filter").addEventListener("change", () => {
+  if (reviewAllRows.length) applyReviewFilters();
 });
 document.getElementById("review-yesterday").addEventListener("click", () => {
   document.getElementById("review-date").value = chicagoYesterdayISO();
@@ -1776,19 +1790,37 @@ async function loadReviewByDate() {
   dirtyByUrl = new Map();
 
   summary.innerHTML = `<strong>${main.count}</strong> matching · <strong>${pinnedRows.length}</strong> pinned (filter changed) · filed_at <strong>${main.filed_at}</strong>`;
-  applyTierFilter();
+  applyReviewFilters();
 }
 
-function applyTierFilter() {
-  const filter = document.getElementById("review-tier-filter").value;
-  let filtered;
-  if (filter === "all") {
-    filtered = reviewAllRows;
-  } else if (filter === "none") {
-    filtered = reviewAllRows.filter((r) => !aiTier(r.ai_analysis));
-  } else {
-    filtered = reviewAllRows.filter((r) => aiTier(r.ai_analysis) === filter);
+const CATEGORY_KEYWORDS = ["NEGATIVE_FLOAT", "CRITICAL", "HIGH", "SHARES_DECREASED", "SHARES_MISMATCH"];
+
+function applyReviewFilters() {
+  const tierVal = document.getElementById("review-tier-filter").value;
+  const catVal = document.getElementById("review-category-filter").value;
+  let filtered = reviewAllRows;
+
+  // Category filter
+  if (catVal !== "all") {
+    if (catVal === "other") {
+      filtered = filtered.filter((r) => {
+        const c = (r.category || "").toUpperCase();
+        return !CATEGORY_KEYWORDS.some((kw) => c.includes(kw));
+      });
+    } else {
+      filtered = filtered.filter((r) => (r.category || "").toUpperCase().includes(catVal));
+    }
   }
+
+  // AI tier filter
+  if (tierVal !== "all") {
+    if (tierVal === "none") {
+      filtered = filtered.filter((r) => !aiTier(r.ai_analysis));
+    } else {
+      filtered = filtered.filter((r) => aiTier(r.ai_analysis) === tierVal);
+    }
+  }
+
   reviewRowsByUrl = new Map(filtered.map((r) => [r.document_url, r]));
   renderReviewTable(filtered);
 }
