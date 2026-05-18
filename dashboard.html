@@ -1887,6 +1887,17 @@ function sortReviewRows(rows) {
   const isText = col === "ticker" || col === "date_final" || col === "filed_at";
   return [...rows].sort((a, b) => {
     let va, vb;
+    if (col === "ai_tier") {
+      va = aiTier(a.ai_analysis) || "";
+      vb = aiTier(b.ai_analysis) || "";
+      if (!va && !vb) return 0;
+      if (!va) return 1;  // no analysis last
+      if (!vb) return -1;
+      va = va.toLowerCase(); vb = vb.toLowerCase();
+      if (va < vb) return asc ? -1 : 1;
+      if (va > vb) return asc ? 1 : -1;
+      return 0;
+    }
     if (isText) {
       va = (a[col] || "");
       vb = (b[col] || "");
@@ -1934,7 +1945,7 @@ function renderReviewTable(rows) {
           ${dateSortHeader("Reported", "date_final")}
           ${dateSortHeader("Filed", "filed_at")}
           <th>Category</th>
-          <th>AI</th>
+          ${dateSortHeader("AI", "ai_tier")}
           <th class="num" title="test_outstanding / test_float vs OS final / Tradable final">Check</th>
           <th class="num">OS (raw)</th>
           <th class="num">OS Reported</th>
