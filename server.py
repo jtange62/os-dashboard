@@ -151,10 +151,10 @@ REVIEW_QUERY = f"""
                 hf.form_type NOT LIKE '%%MANUAL%%'
                 AND hf.ticker IS NOT NULL
                 AND (
-                    -- Sub-500k finals bypass category AND exchange filters (most critical)
-                    hf.outstanding_shares_final < 500000
-                    OR hf.float_final < 500000
-                    OR hf.tradable_float_final < 500000
+                    -- Sub-1M finals bypass category AND exchange filters (most critical)
+                    hf.outstanding_shares_final < 1000000
+                    OR hf.float_final < 1000000
+                    OR hf.tradable_float_final < 1000000
                     -- Normal path: must be on major exchange + category match + under-10M or ADR
                     OR (
                         s.ticker IS NOT NULL
