@@ -390,11 +390,9 @@
     box-sizing: border-box;
     text-align: left;
   }
-  .editable-checkbox {
-    width: auto !important;
-    cursor: pointer;
-    transform: scale(1.3);
-  }
+  .bool-toggle { display: inline-flex; gap: 10px; align-items: center; }
+  .bool-opt { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font-size: 12px; color: var(--text); user-select: none; }
+  .bool-cb { cursor: pointer; transform: scale(1.15); }
   .panel-fields textarea.editable {
     width: 100%;
     min-height: 90px;
@@ -1754,6 +1752,24 @@ function renderReviewTable(q, rows, isRefilter) {
   attachReviewHandlers();
 }
 
+function attachBoolToggles(root) {
+  root.querySelectorAll(".bool-cb").forEach((cb) => {
+    cb.addEventListener("click", (e) => e.stopPropagation());
+    cb.addEventListener("change", (e) => {
+      e.stopPropagation();
+      const wrap = cb.closest(".bool-toggle");
+      const hidden = wrap.querySelector("input.editable");
+      const myVal = cb.dataset.bval;
+      if (cb.checked) {
+        wrap.querySelectorAll(".bool-cb").forEach(o => { if (o !== cb) o.checked = false; });
+        hidden.value = myVal;
+      } else {
+        hidden.value = "";
+      }
+      onEditableChange(hidden);
+    });
+  });
+}
 function attachReviewHandlers() {
   document.querySelectorAll("#review-body .editable").forEach((el) => {
     el.addEventListener("input", () => onEditableChange(el));
@@ -1761,6 +1777,7 @@ function attachReviewHandlers() {
     el.addEventListener("click", (e) => e.stopPropagation());
     el.addEventListener("mousedown", (e) => e.stopPropagation());
   });
+  attachBoolToggles(document.getElementById("review-body"));
   document.querySelectorAll("#review-body [data-save]").forEach((b) => {
     b.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1799,7 +1816,7 @@ function originalValueFor(q, id, field) {
 function isSameValue(q, a, b, field) {
   const t = fieldType(q, field);
   if (t === "boolean") {
-    const norm = (v) => v === true || v === "true" ? "true" : "";
+    const norm = (v) => v === true ? "true" : v === false ? "false" : (v == null || v === "") ? "" : String(v);
     return norm(a) === norm(b);
   }
   if (t === "text" || t === "date") {
@@ -1818,14 +1835,13 @@ function onEditableChange(el) {
   if (!q) return;
   const id = Number(el.dataset.id);
   const field = el.dataset.field;
-  const isCheckbox = el.type === "checkbox";
-  const newVal = isCheckbox ? (el.checked ? "true" : "") : el.value;
-  if (isCheckbox) el.value = newVal;
+  const newVal = el.value;
 
   inputsFor(q, id, field).forEach((other) => {
     if (other !== el) {
-      if (other.type === "checkbox") { other.checked = el.checked; other.value = newVal; }
-      else if (other.value !== newVal) other.value = newVal;
+      if (other.value !== newVal) other.value = newVal;
+      const wrap = other.closest(".bool-toggle");
+      if (wrap) wrap.querySelectorAll(".bool-cb").forEach(cb => { cb.checked = cb.dataset.bval === newVal; });
     }
   });
 
@@ -2085,9 +2101,10 @@ function renderReviewPanel(q, r) {
   const bag = q.dirty.get(id) || {};
   for (const [field, val] of Object.entries(bag)) {
     inputsFor(q, id, field).forEach((el) => {
-      if (el.type === "checkbox") { el.checked = val === "true"; el.value = val; }
-      else el.value = val;
+      el.value = val;
       el.classList.add("dirty");
+      const wrap = el.closest(".bool-toggle");
+      if (wrap) wrap.querySelectorAll(".bool-cb").forEach(cb => { cb.checked = cb.dataset.bval === val; });
     });
   }
   const content = document.getElementById("panel-content");
@@ -2095,6 +2112,7 @@ function renderReviewPanel(q, r) {
     el.addEventListener("input", () => onEditableChange(el));
     el.addEventListener("change", () => onEditableChange(el));
   });
+  attachBoolToggles(content);
   const ids = q.visibleIds || [...q.rows.keys()];
   const idx = ids.indexOf(id);
   document.getElementById("panel-position").textContent = idx >= 0 ? `${idx + 1} / ${ids.length}` : "";
@@ -2351,8 +2369,11 @@ function fieldDate(q, id, col, val) {
   return `<input type="date" class="editable" data-queue="${q.key}" data-id="${id}" data-field="${col}" value="${escapeHtml(display)}" />`;
 }
 function booleanSelect(q, id, col, currentAttr) {
-  const isChecked = currentAttr === "true";
-  return `<input type="checkbox" class="editable editable-checkbox" data-queue="${q.key}" data-id="${id}" data-field="${col}" value="${isChecked ? "true" : ""}" ${isChecked ? "checked" : ""} />`;
+  return `<span class="bool-toggle" data-queue="${q.key}" data-id="${id}" data-field="${col}">
+    <label class="bool-opt"><input type="checkbox" class="bool-cb" data-bval="true" ${currentAttr === "true" ? "checked" : ""} /> True</label>
+    <label class="bool-opt"><input type="checkbox" class="bool-cb" data-bval="false" ${currentAttr === "false" ? "checked" : ""} /> False</label>
+    <input type="hidden" class="editable" data-queue="${q.key}" data-id="${id}" data-field="${col}" value="${currentAttr}" />
+  </span>`;
 }
 
 // ====================================================================
