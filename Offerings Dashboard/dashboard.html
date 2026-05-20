@@ -2144,7 +2144,7 @@ function renderReviewPanel(q, r) {
           const abbr = (n) => { const v = num(n); if (v == null) return "—"; if (Math.abs(v) >= 1e6) return (v/1e6).toFixed(1) + "M"; if (Math.abs(v) >= 1e3) return (v/1e3).toFixed(0) + "K"; return v.toLocaleString(); };
           wsEl.innerHTML = `<table style="width:100%;font-size:11px;border-collapse:collapse;">
             <thead><tr style="text-align:left;border-bottom:1px solid var(--border);">
-              <th style="padding:2px 3px;">Details</th><th style="padding:2px 3px;">Owners2</th>
+              <th style="padding:2px 3px;">Details</th><th style="padding:2px 3px;">Form</th><th style="padding:2px 3px;">Owners2</th>
               <th style="padding:2px 3px;">Verified</th>
               <th style="padding:2px 3px;">Ex. Price</th><th style="padding:2px 3px;">Wts Amt</th>
               <th style="padding:2px 3px;">Conv $</th><th style="padding:2px 3px;">Offer $</th>
@@ -2154,6 +2154,7 @@ function renderReviewPanel(q, r) {
               const o2 = (s.owners_two || "").length > 14 ? s.owners_two.substring(0,14) + "…" : (s.owners_two || "—");
               return `<tr style="border-bottom:1px solid var(--border);">
               <td style="padding:2px 3px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(s.details || "")}">${escapeHtml(s.details || "—")}</td>
+              <td style="padding:2px 3px;">${escapeHtml(s.form_type || "—")}</td>
               <td style="padding:2px 3px;" title="${escapeHtml(s.owners_two || "")}">${escapeHtml(o2)}</td>
               <td style="padding:2px 3px;"><select class="warrants-staging-verified-select" data-staging-id="${s.id}" style="font-size:11px;padding:1px 2px;">
                 <option value=""${vv === "" ? " selected" : ""}>—</option>
