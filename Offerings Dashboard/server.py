@@ -574,7 +574,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         exclude_id = params.get("exclude", [""])[0] or ""
         filed_at = (params.get("filed_at", [""])[0] or "").strip()
         sql = (
-            "SELECT id, details, owners_two, verified, warrants_exercise_price, "
+            "SELECT id, details, form_type, owners_two, verified, warrants_exercise_price, "
             "       warrants_amount, conversion_price, offering_amount, filed_at "
             "FROM warrants_convertibles4 "
             "WHERE ticker = %s "
