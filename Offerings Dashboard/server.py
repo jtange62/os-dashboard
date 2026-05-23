@@ -224,6 +224,7 @@ WARRANTS_EDITABLE_COLUMNS = {
     "document_url": "text",
     "filed_at": "date",
     "doublecheck": "text",
+    "floor_price": "numeric",
 }
 
 WARRANTS_REVIEW_COLUMNS = """
@@ -257,6 +258,7 @@ WARRANTS_REVIEW_COLUMNS = """
     file_no,
     notes,
     doublecheck,
+    floor_price,
     updated_at
 """
 
