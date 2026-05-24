@@ -1,3 +1,68 @@
+# CLAUDE.md
+
+These rules apply to every task in this project unless explicitly overridden.
+Bias: caution over speed on non-trivial work. Use judgment on trivial tasks.
+
+## Rule 1 — Think Before Coding
+State assumptions explicitly. If uncertain, ask rather than guess.
+Present multiple interpretations when ambiguity exists.
+Push back when a simpler approach exists.
+Stop when confused. Name what's unclear.
+
+## Rule 2 — Simplicity First
+Minimum code that solves the problem. Nothing speculative.
+No features beyond what was asked. No abstractions for single-use code.
+Test: would a senior engineer say this is overcomplicated? If yes, simplify.
+
+## Rule 3 — Surgical Changes
+Touch only what you must. Clean up only your own mess.
+Don't "improve" adjacent code, comments, or formatting.
+Don't refactor what isn't broken. Match existing style.
+
+## Rule 4 — Goal-Driven Execution
+Define success criteria. Loop until verified.
+Don't follow steps. Define success and iterate.
+Strong success criteria let you loop independently.
+
+## Rule 5 — Use the model only for judgment calls
+Use me for: classification, drafting, summarization, extraction.
+Do NOT use me for: routing, retries, deterministic transforms.
+If code can answer, code answers.
+
+## Rule 6 — Token budgets are not advisory
+Per-task: 4,000 tokens. Per-session: 30,000 tokens.
+If approaching budget, summarize and start fresh.
+Surface the breach. Do not silently overrun.
+
+## Rule 7 — Surface conflicts, don't average them
+If two patterns contradict, pick one (more recent / more tested).
+Explain why. Flag the other for cleanup.
+Don't blend conflicting patterns.
+
+## Rule 8 — Read before you write
+Before adding code, read exports, immediate callers, shared utilities.
+"Looks orthogonal" is dangerous. If unsure why code is structured a way, ask.
+
+## Rule 9 — Tests verify intent, not just behavior
+Tests must encode WHY behavior matters, not just WHAT it does.
+A test that can't fail when business logic changes is wrong.
+
+## Rule 10 — Checkpoint after every significant step
+Summarize what was done, what's verified, what's left.
+Don't continue from a state you can't describe back.
+If you lose track, stop and restate.
+
+## Rule 11 — Match the codebase's conventions, even if you disagree
+Conformance > taste inside the codebase.
+If you genuinely think a convention is harmful, surface it. Don't fork silently.
+
+## Rule 12 — Fail loud
+"Completed" is wrong if anything was skipped silently.
+"Tests pass" is wrong if any were skipped.
+Default to surfacing uncertainty, not hiding it.
+
+---
+
 # OS Dashboard
 
 Internal tool for the AskEdgar data team to research a ticker's historical float and outstanding shares, and to review records flagged by the data pipeline.
@@ -9,7 +74,7 @@ A single-page browser dashboard backed by a tiny Python proxy server. The browse
 Two tabs:
 
 - **Research** — enter a ticker and get a snapshot, a chart, the historical float records, recent offerings, the latest ownership table (split-adjusted), and recent ownership-table filings.
-- **Review Queue** — list of records to inspect and edit. Two modes: a daily queue filtered by `filed_at` + a category regex, or a ticker view that returns the full history of a single ticker. Edits write back to Postgres.
+- **Review Queue** — list of records to inspect and edit. Three modes: a daily queue filtered by `filed_at` + tiered filters, a ticker view that returns the full history of a single ticker, or a low-float view. Edits write back to Postgres.
 
 ## Sibling app: Offerings Dashboard
 
@@ -23,7 +88,7 @@ py -3 server.py        # or double-click start.bat
 
 `start.bat` auto-installs `psycopg[binary]` on first run, then opens the browser.
 
-`config.json` (gitignored) holds the AskEdgar key, sec-api.io key, and Postgres creds. Copy `config.example.json` to `config.json` to bootstrap a fresh checkout.
+`config.json` (gitignored) holds the AskEdgar key, sec-api.io key, Anthropic key, and Postgres creds. Copy `config.example.json` to `config.json` to bootstrap a fresh checkout.
 
 ## Architecture
 
@@ -35,21 +100,25 @@ Browser  ──>  http://localhost:8765/  (server.py)
                          ├─ /api/ownership               → eapi.askedgar.io/v1/ownership
                          ├─ /api/offerings               → eapi.askedgar.io/v1/offerings
                          ├─ /api/reverse-splits          → eapi.askedgar.io/v1/reverse-splits
+                         ├─ /api/float-outstanding       → eapi.askedgar.io/v1/float-outstanding
                          ├─ /api/filings                 → api.sec-api.io (Filing Query API, POST)
                          ├─ /api/historical-postgres     → Postgres (historical_float_final by ticker)
                          ├─ /api/review                  → Postgres
-                         │     ?filed_at=YYYY-MM-DD      → daily mode (category regex filter)
+                         │     ?filed_at=YYYY-MM-DD      → daily mode (tiered filter logic)
                          │     ?ticker=X                 → ticker mode (full history, no other filters)
+                         │     ?mode=lowfloat            → low-float mode
                          ├─ /api/review/by-document-urls → Postgres (fetch rows by PK list, used for pin merge)
-                         └─ /api/review/update           → Postgres (UPDATE allowlisted columns)
+                         ├─ /api/review/update           → Postgres (UPDATE allowlisted columns)
+                         └─ /api/ai-analyze              → Anthropic Claude (POST, generates AI analysis)
 ```
 
 The proxy decompresses gzipped upstream responses (sec-api.io serves gzip even without `Accept-Encoding`) and never forwards the raw API keys to the browser.
 
 ## Files
 
-- `server.py` — proxy + Postgres wrapper. ~300 lines, stdlib `http.server` + `psycopg`.
+- `server.py` — proxy + Postgres wrapper + AI analysis. stdlib `http.server` + `psycopg`.
 - `dashboard.html` — single-file UI. Vanilla JS, Chart.js from CDN, no build step.
+- `pre_analyze.py` — nightly batch script that pre-populates AI analysis for the daily queue. Runs via cron at 1 AM CST on Lightsail.
 - `config.json` / `config.example.json` — runtime credentials. `config.json` is gitignored.
 - `start.bat` — Windows launcher that ensures `psycopg` is installed.
 - `SUMMARY.md` — human-readable overview of features.
@@ -63,6 +132,7 @@ The proxy decompresses gzipped upstream responses (sec-api.io serves gzip even w
 - `/v1/ownership` — beneficial owner rows grouped by `reported_date`.
 - `/v1/offerings` — recent share issuances.
 - `/v1/reverse-splits` — `{execution_date, split_from, split_to}`. Adjustment factor = `split_to / split_from`.
+- `/v1/float-outstanding` — market cap, float, outstanding shares snapshot for a ticker. Used in the detail panel to display current market cap.
 
 Auth: `API-KEY: <key>` header.
 
@@ -75,19 +145,44 @@ Auth: `API-KEY: <key>` header.
 - AWS Lightsail RDS, `postgres` DB. Connection requires `sslmode=require`. Host/user/password live in `config.json`.
 - Primary table: `historical_float_final`. PK: `document_url` (single column).
 - The `notes` column on this table is exposed as the analyst-editable notes field in the Review Queue UI — analyst notes persist directly in production data.
-- `screener` is no longer joined in the daily query (the previous tradable-float / market-cap filter was replaced with the category regex).
+- `screener` table is LEFT JOINed in the daily query to filter by exchange (NASDAQ/NYSE/AMEX) on the normal path. Sub-1M rows bypass this join.
 
 ## Review Queue specifics
 
 ### Daily mode (default)
 Filter ([server.py](server.py) → `REVIEW_QUERY`):
 ```sql
-WHERE form_type NOT LIKE '%MANUAL%'
-  AND filed_at = :filed_at                              -- defaults to yesterday CDT
-  AND category ~ 'NEGATIVE_FLOAT|HIGH|CRITICAL|SHARES_DECREASED|SHARES_MISMATCH'
-ORDER BY date_final DESC
+FROM historical_float_final hf
+LEFT JOIN screener s ON s.ticker = hf.ticker
+    AND s.exchange IN ('NASDAQ', 'NYSE', 'AMEX')
+WHERE
+    hf.form_type NOT LIKE '%MANUAL%'
+    AND hf.filed_at = :filed_at                   -- defaults to yesterday CDT
+    AND hf.ticker IS NOT NULL
+    AND (
+        -- Sub-1M path: bypasses category AND exchange filters
+        hf.outstanding_shares_final < 1000000
+        OR hf.float_final < 1000000
+        OR hf.tradable_float_final < 1000000
+        -- Normal path: exchange + category + under-10M or ADR
+        OR (
+            s.ticker IS NOT NULL
+            AND hf.category ~ 'NEGATIVE_FLOAT|HIGH|CRITICAL|SHARES_DECREASED|SHARES_MISMATCH'
+            AND (
+                hf.outstanding_shares_final < 10000000
+                OR hf.float_final < 10000000
+                OR hf.tradable_float_final < 10000000
+                OR hf.ticker IN (SELECT DISTINCT ticker FROM historical_float_final WHERE is_adr = true)
+            )
+        )
+    )
+ORDER BY hf.date_final DESC
 LIMIT 1000
 ```
+
+**Client-side filters** (applied after fetch, no re-query):
+- **Category dropdown**: All, Negative Float, Critical, High, Shares Decreased, Shares Mismatch, Other
+- **AI Tier dropdown**: All, Critical, Discrepancy, Minor, No Change, No analysis
 
 ### Ticker mode
 Filter ([server.py](server.py) → `REVIEW_BY_TICKER_QUERY`):
@@ -107,14 +202,24 @@ Server-side allowlist in `EDITABLE_COLUMNS`:
 Adding a new editable column requires updating BOTH `EDITABLE_COLUMNS` (server, with type) and the row + panel renderers (client). The server allowlists; do not bypass it.
 
 ### Detail panel
-Clicking any Review-Queue row opens a side panel with every field grouped by section: source filing / computed (read-only) / editable / details / prompt. The panel and the inline row editors share state — every editable input has `data-url` + `data-field` attributes, and `inputsFor(url, field)` finds all matching inputs across the row and panel. `onEditableChange` mirrors values, dirty class, and OS-sync warning to all matching inputs. Saving from either UI re-renders the row AND refreshes the panel.
+Clicking any Review-Queue row opens a **double-wide (1200px) side panel** with a two-column layout:
+- **Left column**: Computed (read-only) values (OS Final, Float Final, Tradable Final) + Editable fields
+- **Right column**: AI Analysis (with Regenerate link) + Source filing info (document link, ownership src, dates, category, flags, market cap from AskEdgar API)
+
+Every editable input has `data-url` + `data-field` attributes, and `inputsFor(url, field)` finds all matching inputs across the row and panel. `onEditableChange` mirrors values, dirty class, and OS-sync warning to all matching inputs. Saving from either UI re-renders the row AND refreshes the panel.
 
 Panel header has prev/next arrows + a "N / total" position indicator. Order is the insertion order of `reviewRowsByUrl` (pinned rows first in daily mode, then SQL results). Boundary buttons disable. Keyboard: `j`/`↓` next, `k`/`↑` previous, `Esc` close. Shortcuts skip when focus is in an input/textarea/select.
 
-### Pin-on-save (daily mode only)
-When a row is saved, its `document_url` goes into `localStorage` (`os-dashboard-pinned-urls`). On the next refresh, any pinned URL that no longer matches the SQL filter is fetched separately via `/api/review/by-document-urls` and shown in a faded "stale" row above the live queue. Click the `pinned ✕` badge to unpin. Skipped in ticker mode because the SQL already returns the full history.
+### AI Analysis
+- **On-demand**: Opening a row's panel triggers AI analysis if `ai_analysis` is NULL. Uses `/api/ai-analyze` which calls Claude (Anthropic API) with filing context.
+- **Batch**: `pre_analyze.py` runs nightly via cron at 1 AM CST, processes yesterday's daily queue rows. Skips already-analyzed rows. 10-second delay between requests, exponential backoff on rate limits (up to 8 retries).
+- **AI tier column**: The queue table shows a color-coded tier badge (CRITICAL/DISCREPANCY/MINOR/NO CHANGE) extracted from the analysis text. Column is sortable.
+- **ADR guidance**: The AI prompt notes that ADR tickers should have values expressed in ordinary shares, not ADRs. The `ads_ratio` field handles the conversion.
 
-This is per-browser — pins don't sync across analysts. If shared pins become useful, store them in a small Postgres table keyed by `(user_id, document_url)`.
+### Pin-on-save (daily mode only)
+When a row is saved, its `document_url` goes into `localStorage` (`os-dashboard-pinned-urls`). On the next refresh, any pinned URL that no longer matches the SQL filter is fetched separately via `/api/review/by-document-urls` — but only if its `filed_at` matches the selected date. Click the `pinned ✕` badge to unpin. Skipped in ticker mode because the SQL already returns the full history.
+
+This is per-browser — pins don't sync across analysts.
 
 ### OS sync warning
 `outstanding_shares` and `outstanding_shares_reported` are expected to be equal. If the analyst edits one and they diverge, both inputs turn yellow with a tooltip wherever they're rendered (row + panel); on save we prompt for confirmation before committing a mismatch.
@@ -168,6 +273,7 @@ The `<span class="dl-icons">` wrapper has `onclick="event.stopPropagation()"` so
 - **Repo on instance**: `/opt/os-dashboard-repo/` (symlinked from `/opt/os-dashboard` and `/opt/offerings-dashboard`)
 - **Git auth on instance**: token embedded in the HTTPS remote URL (already configured). `git pull` works without extra credentials.
 - **Systemd services**: `os-dashboard.service` (port 8765), `offerings-dashboard.service` (port 8766). Both set to `Restart=always`.
+- **Cron job** (ubuntu user): `0 1 * * * /usr/bin/python3 /opt/os-dashboard/pre_analyze.py >> /opt/os-dashboard/pre_analyze.log 2>&1` — runs nightly batch AI analysis at 1 AM CST.
 - **config.json**: gitignored — already present on the instance at both `/opt/os-dashboard-repo/config.json` and `/opt/os-dashboard-repo/Offerings Dashboard/config.json`. If credentials change, `scp` the updated file to the instance.
 - **Deploy steps**: push to GitHub, then SSH in and pull + restart:
   ```
@@ -178,7 +284,7 @@ The `<span class="dl-icons">` wrapper has `onclick="event.stopPropagation()"` so
   ```
   Or as a one-liner from local:
   ```
-  ssh -i "C:\Users\jason\Downloads\LightsailDefaultKey-us-east-1.pem" ubuntu@44.204.200.18 "cd /opt/os-dashboard-repo && git pull && sudo systemctl restart offerings-dashboard"
+  ssh -i "C:\Users\jason\Downloads\LightsailDefaultKey-us-east-1.pem" ubuntu@44.204.200.18 "cd /opt/os-dashboard-repo && git pull && sudo systemctl restart os-dashboard"
   ```
 
 ## Things to know
@@ -188,3 +294,4 @@ The `<span class="dl-icons">` wrapper has `onclick="event.stopPropagation()"` so
 - `start.bat` runs Python with `-u` (unbuffered) so server logs flush immediately when redirected.
 - Server prints to stderr via `log_message` override; stdout has the startup banner.
 - Killing the server: on Windows, `py.exe` is a launcher that spawns a child `python.exe`. Stopping the wrapper does NOT kill the child. Use `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*server.py*" }` to find them all.
+- When the review tab is active, `body.review-active` disables page scroll so only the table scrolls (single scrollbar). Research tab scrolls normally.
