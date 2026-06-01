@@ -73,6 +73,7 @@ CHICAGO = zoneinfo.ZoneInfo("America/Chicago")
 AUTH_USERS = {
     "jmt415": hashlib.sha256(b"askedgar2115").hexdigest(),
     "rohit":  hashlib.sha256(b"rohitupwork").hexdigest(),
+    "khalid": hashlib.sha256(b"khalid").hexdigest(),
 }
 SESSIONS = set()          # in-memory session tokens (cleared on restart)
 
