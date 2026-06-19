@@ -149,12 +149,24 @@ REVIEW_QUERY = f"""
     WHERE
         hf.filed_at = %(filed_at)s
         AND (
-            -- Share-issuance path: always show if details flags a share issuance,
-            -- regardless of exchange / category / value thresholds.
-            hf.details ILIKE '%%Share issuance via%%'
-            -- Future-date path: a date_final after today is almost always an error
-            -- (reported "as of" date in the future) -- always surface it.
-            OR hf.date_final > CURRENT_DATE
+            -- Share-issuance path: show share-issuance rows on a major exchange that have
+            -- at least one computed final value (bypasses category + value thresholds).
+            (
+                hf.details ILIKE '%%Share issuance via%%'
+                AND s.ticker IS NOT NULL
+                AND (hf.outstanding_shares_final IS NOT NULL
+                     OR hf.float_final IS NOT NULL
+                     OR hf.tradable_float_final IS NOT NULL)
+            )
+            -- Future-date path: a date_final after today is almost always an error (reported
+            -- "as of" date in the future). Surface it for major-exchange rows with a final value.
+            OR (
+                hf.date_final > CURRENT_DATE
+                AND s.ticker IS NOT NULL
+                AND (hf.outstanding_shares_final IS NOT NULL
+                     OR hf.float_final IS NOT NULL
+                     OR hf.tradable_float_final IS NOT NULL)
+            )
             -- Test-value diff path: bypass every other filter when the
             -- secondary extractor disagrees with our finals by >20 percent.
             OR (
