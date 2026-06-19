@@ -2670,7 +2670,7 @@ function renderReviewPanel(r) {
   // Fetch 4 most-recent offerings for this ticker.
   if (r.ticker) {
     const ticker = r.ticker;
-    fetch(`/api/offerings?ticker=${encodeURIComponent(ticker)}&limit=4&page=1`)
+    fetch(`/api/offerings?ticker=${encodeURIComponent(ticker)}&limit=6&page=1`)
       .then((res) => res.json())
       .then((d) => {
         // Bail if user moved on to a different row.
@@ -2747,7 +2747,7 @@ function renderPanelHistorical(rows, current) {
 
 function renderPanelOfferings(rows) {
   if (!rows.length) return `<div class="status">No recent offerings.</div>`;
-  const sorted = [...rows].sort((a, b) => String(b.filed_at || "").localeCompare(String(a.filed_at || ""))).slice(0, 4);
+  const sorted = [...rows].sort((a, b) => String(b.filed_at || "").localeCompare(String(a.filed_at || ""))).slice(0, 6);
   const fmtUsd = (v) => v == null ? "—" : "$" + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
   return `
     <table style="font-size:12px;">
