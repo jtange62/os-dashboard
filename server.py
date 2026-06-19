@@ -148,29 +148,28 @@ REVIEW_QUERY = f"""
         AND s.exchange IN ('NASDAQ', 'NYSE', 'AMEX')
     WHERE
         hf.filed_at = %(filed_at)s
+        -- Universal gate: this table is about analyzing share amounts, so every row we surface
+        -- (in ANY branch below) must have at least one computed final value.
+        AND (hf.outstanding_shares_final IS NOT NULL
+             OR hf.float_final IS NOT NULL
+             OR hf.tradable_float_final IS NOT NULL)
         AND (
-            -- Share-issuance path: show share-issuance rows on a major exchange that have
-            -- at least one computed final value (bypasses category + value thresholds).
+            -- Share-issuance path: show share-issuance rows on a major exchange
+            -- (bypasses category + value thresholds).
             (
                 hf.details ILIKE '%%Share issuance via%%'
                 AND s.ticker IS NOT NULL
-                AND (hf.outstanding_shares_final IS NOT NULL
-                     OR hf.float_final IS NOT NULL
-                     OR hf.tradable_float_final IS NOT NULL)
             )
             -- Future-date path: a date_final after today is almost always an error (reported
-            -- "as of" date in the future). Surface it for major-exchange rows with a final value.
+            -- "as of" date in the future). Surface it for major-exchange rows.
             OR (
                 hf.date_final > CURRENT_DATE
                 AND s.ticker IS NOT NULL
-                AND (hf.outstanding_shares_final IS NOT NULL
-                     OR hf.float_final IS NOT NULL
-                     OR hf.tradable_float_final IS NOT NULL)
             )
-            -- ADR-review path: show ADR-flagged rows (or category ADR_REVIEW) on a major
+            -- ADR-review path: show ADR-flagged rows (or ADR_REVIEW category/details) on a major
             -- exchange, regardless of category / value thresholds.
             OR (
-                (hf.is_adr = true OR hf.category ILIKE '%%ADR_REVIEW%%')
+                (hf.is_adr = true OR hf.category ILIKE '%%ADR_REVIEW%%' OR hf.details ILIKE '%%ADR_REVIEW%%')
                 AND s.ticker IS NOT NULL
             )
             -- Test-value diff path: bypass every other filter when the
@@ -254,13 +253,13 @@ REVIEW_LOW_FLOAT_QUERY = f"""
     LIMIT 50
 """
 
-# ADR mode: rows flagged as ADR (by either source). No float cap; same exclusions
+# ADR mode: rows flagged as ADR (by either source or ADR_REVIEW). No float cap; same exclusions
 # as low-float (major exchange, not CORRECTED, not Shell / Acquisition Corp).
 REVIEW_ADR_QUERY = f"""
     SELECT {REVIEW_COLUMNS}
     FROM historical_float_final hf
     {EXCHANGE_JOIN}
-    WHERE (hf.is_adr = true OR s.isadr = true)
+    WHERE (hf.is_adr = true OR s.isadr = true OR hf.category ILIKE '%%ADR_REVIEW%%' OR hf.details ILIKE '%%ADR_REVIEW%%')
         AND hf.ticker IS NOT NULL
         AND (hf.outstanding_shares_final IS NOT NULL
              OR hf.float_final IS NOT NULL
@@ -317,6 +316,25 @@ AS_OF_PRINCIPLE = (
     "share amounts should be updated to match date_final, or date_final should be moved to match the values.\n\n"
 )
 
+ADR_AUDIT_GUIDANCE = (
+    "ADR AUDIT CONTEXT:\n"
+    "If ADR AUDIT CONTEXT is provided, use it as extracted evidence, not automatic truth. Compare every ADR event "
+    "to this row's date_final.\n"
+    "- If an ADR ratio change is effective on/before date_final, the row's ads_ratio should generally reflect the "
+    "new ratio.\n"
+    "- If the effective_date is after date_final, do not apply the future change to this row; mention it only as "
+    "future context.\n"
+    "- If ADR AUDIT CONTEXT shows ADR facility termination, ADS cancellation/exchange, deposit agreement termination, "
+    "substitution listing, or direct ordinary-share listing effective on/before date_final, the row may no longer be "
+    "an ADR row. In that case, do NOT require an active ADS ratio. Treat ads_ratio=1 as the pipeline convention for "
+    "direct ordinary-share trading, and focus on whether is_adr should be false and whether share counts are "
+    "ordinary-share counts as of date_final.\n"
+    "- If the filing says ADSs 'previously represented' a number of ordinary shares, treat that as historical unless "
+    "the text clearly says it is still current.\n"
+    "- If ordinary shares were split/consolidated, verify that outstanding_shares, float, tradable_float, "
+    "affiliate_shares, and restricted_shares are on the correct pre/post split basis for date_final.\n\n"
+)
+
 # Prompt for non-ADR rows.
 STANDARD_AI_PROMPT = (
     "You are a data analyst at AskEdgar reviewing a single historical_float_final row. "
@@ -359,7 +377,7 @@ STANDARD_AI_PROMPT = (
     + AI_OUTPUT_FORMAT
 )
 
-# Prompt for ADR rows (is_adr true on the row OR on the screener). ADR-specific concerns lead.
+# Prompt for ADR rows (is_adr true on the row, screener, or ADR_REVIEW flag). ADR-specific concerns lead.
 ADR_AI_PROMPT = (
     "You are a data analyst at AskEdgar reviewing a single historical_float_final row for an ADR / ADS-listed company "
     "(a foreign issuer trading in the US via American Depositary Shares). Your job: tell the analyst whether the "
@@ -384,6 +402,7 @@ ADR_AI_PROMPT = (
     "reconcile, explain the discrepancy and recommend the corrected value. Also compare this row's share counts to the "
     "recent HISTORICAL FLOAT RECORDS and the current SCREENER -- an order-of-magnitude jump/drop versus recent ordinary-share "
     "counts often means ADSs were captured instead of ordinary shares (or vice versa).\n\n"
+    + ADR_AUDIT_GUIDANCE +
     "ALSO CHECK (general):\n"
     "- Negative or very low float/tradable_float (< 200k, especially < 100k or negative) is almost always wrong -- usually "
     "an affiliate_shares / restricted_shares error. Check offerings + news for issuances.\n"
@@ -438,7 +457,10 @@ SHARE_ISSUANCE_BODY = (
 SHARE_ISSUANCE_ADR_NOTE = (
     "ADR NOTE (this issuer is an ADR): express ALL share counts in ORDINARY shares, not ADSs. If the issuance is "
     "stated in ADSs, convert with ads_ratio (ordinary = ADSs * ads_ratio) BEFORE adding to the prior ordinary-share "
-    "count. ads_ratio must be present; if it is missing, flag it and recommend a value.\n\n"
+    "count. If ADR AUDIT CONTEXT is provided, treat it as evidence, not automatic truth: apply ratio/split/termination "
+    "events only when effective on/before date_final, do not apply future events, and if the evidence shows an ADR "
+    "facility termination or direct ordinary-share listing effective on/before date_final, do not require an active ADS "
+    "ratio; ads_ratio=1 is the pipeline convention for direct ordinary-share trading.\n\n"
 )
 
 
@@ -452,6 +474,19 @@ def _json_default(obj):
 
 def get_conn():
     return psycopg.connect(**DB_CONFIG)
+
+
+def _has_adr_review_flag(row):
+    text = f"{row.get('category') or ''}\n{row.get('details') or ''}".lower()
+    return "adr_review" in text
+
+
+def _needs_adr_packet(row):
+    return (
+        row.get("is_adr") is True
+        or row.get("screener_isadr") is True
+        or _has_adr_review_flag(row)
+    )
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -883,6 +918,149 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return None
         return out
 
+    @staticmethod
+    def _get_adr_audit_context(ticker, row):
+        doc_url = row.get("document_url") or ""
+        row_date = row.get("date_final")
+
+        event_sql = """
+            SELECT
+                e.id,
+                e.event_type,
+                e.effective_date,
+                e.old_ads_ratio,
+                e.new_ads_ratio,
+                e.ordinary_split_from,
+                e.ordinary_split_to,
+                e.ordinary_share_multiplier,
+                e.confidence,
+                e.source_form_type,
+                e.source_filed_at,
+                e.source_document_url,
+                CASE
+                    WHEN e.supporting_excerpt IS NULL THEN NULL
+                    ELSE LEFT(e.supporting_excerpt, 1200)
+                END AS supporting_excerpt
+            FROM adr_corporate_action_events e
+            WHERE e.ticker = %s
+              AND (
+                    e.source_document_url = %s
+                    OR EXISTS (
+                        SELECT 1
+                        FROM adr_corporate_action_audit a
+                        WHERE a.source_event_id = e.id
+                          AND a.row_document_url = %s
+                    )
+                    OR (
+                        %s::date IS NULL
+                        OR e.effective_date IS NULL
+                        OR e.effective_date BETWEEN %s::date - INTERVAL '730 days'
+                                                AND %s::date + INTERVAL '365 days'
+                    )
+              )
+            ORDER BY
+                CASE
+                    WHEN e.source_document_url = %s
+                         OR EXISTS (
+                            SELECT 1
+                            FROM adr_corporate_action_audit a
+                            WHERE a.source_event_id = e.id
+                              AND a.row_document_url = %s
+                         )
+                    THEN 0
+                    ELSE 1
+                END,
+                e.effective_date DESC NULLS LAST,
+                e.created_at DESC
+            LIMIT 8
+        """
+        event_params = [
+            ticker,
+            doc_url,
+            doc_url,
+            row_date,
+            row_date,
+            row_date,
+            doc_url,
+            doc_url,
+        ]
+
+        with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(event_sql, event_params)
+            event_rows = [dict(r) for r in cur.fetchall()]
+
+            event_ids = [r["id"] for r in event_rows]
+            events = []
+            for event in event_rows:
+                event = dict(event)
+                event.pop("id", None)
+                events.append(event)
+
+            audit_scope = [
+                "a.row_document_url = %s",
+                "e.source_document_url = %s",
+            ]
+            audit_params = [ticker, doc_url, doc_url]
+            if event_ids:
+                placeholders = ", ".join(["%s"] * len(event_ids))
+                audit_scope.append(f"a.source_event_id IN ({placeholders})")
+                audit_params.extend(event_ids)
+            if row_date:
+                audit_scope.append(
+                    "(a.row_date_final IS NULL OR a.row_date_final BETWEEN "
+                    "%s::date - INTERVAL '730 days' AND %s::date + INTERVAL '365 days')"
+                )
+                audit_params.extend([row_date, row_date])
+            else:
+                audit_scope.append("TRUE")
+
+            audit_sql = f"""
+                SELECT
+                    a.target_action,
+                    a.row_document_url,
+                    a.row_date_final,
+                    a.old_ads_ratio,
+                    a.proposed_ads_ratio,
+                    a.old_outstanding_shares,
+                    a.proposed_outstanding_shares,
+                    a.old_outstanding_shares_reported,
+                    a.proposed_outstanding_shares_reported,
+                    a.status,
+                    a.reason
+                FROM adr_corporate_action_audit a
+                LEFT JOIN adr_corporate_action_events e
+                  ON e.id = a.source_event_id
+                WHERE a.ticker = %s
+                  AND ({' OR '.join(audit_scope)})
+                ORDER BY
+                    CASE
+                        WHEN a.row_document_url = %s OR e.source_document_url = %s
+                        THEN 0
+                        ELSE 1
+                    END,
+                    a.row_date_final DESC NULLS LAST,
+                    a.created_at DESC
+                LIMIT 8
+            """
+            audit_params.extend([doc_url, doc_url])
+            cur.execute(audit_sql, audit_params)
+            audit_proposals = [dict(r) for r in cur.fetchall()]
+
+        if not events and not audit_proposals:
+            return None
+
+        return {
+            "row_flags": {
+                "is_adr": row.get("is_adr"),
+                "screener_isadr": row.get("screener_isadr"),
+                "ads_ratio": row.get("ads_ratio"),
+                "category": row.get("category"),
+                "details": row.get("details"),
+            },
+            "events": events,
+            "audit_proposals": audit_proposals,
+        }
+
     def _gather_ai_context(self, ticker, row):
         ctx = {}
         # Filing text (only for sec.gov / benzinga URLs — that's where the OS came from)
@@ -929,6 +1107,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 ctx["prior_records"] = cur.fetchall()
         except Exception as e:
             ctx["prior_records_error"] = str(e)
+
+        if _needs_adr_packet(row):
+            try:
+                adr_context = self._get_adr_audit_context(ticker, row)
+                if adr_context:
+                    ctx["adr_audit_context"] = adr_context
+            except Exception as e:
+                ctx["adr_audit_context_error"] = str(e)
 
         # News (7 most recent, excluding form_type 'grok' and 'jmt415')
         try:
@@ -1000,6 +1186,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif ctx.get("filing_text_error"):
             sections.append("\n=== SOURCE FILING TEXT ===")
             sections.append(f"(failed to fetch: {ctx['filing_text_error']})")
+        if ctx.get("adr_audit_context"):
+            sections.append("\n=== ADR AUDIT CONTEXT ===")
+            sections.append(json.dumps(ctx["adr_audit_context"], default=_json_default, indent=2))
         sections.append(
             "\n=== CURRENT PRICE / SCREENER (today's snapshot — NOT necessarily the truth for this row) ===\n"
             "This is the most-recently-updated outstanding/float for the ticker. It is good background "
@@ -1029,7 +1218,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         # Prompt selection. Precedence: share-issuance > ADR > standard.
         # A share-issuance row that is also an ADR uses the issuance prompt with an ADR note folded in.
-        is_adr_row = (row.get("is_adr") is True) or (row.get("screener_isadr") is True)
+        is_adr_row = _needs_adr_packet(row)
         details_l = (row.get("details") or "").lower()
         category_l = (row.get("category") or "").lower()
         is_issuance = "share issuance" in details_l or "share issuance" in category_l
