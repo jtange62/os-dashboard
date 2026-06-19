@@ -210,6 +210,10 @@ REVIEW_BY_TICKER_QUERY = f"""
     SELECT {REVIEW_COLUMNS}
     FROM historical_float_final hf
     WHERE hf.ticker = %(ticker)s
+        AND (hf.form_type IS NULL OR hf.form_type NOT LIKE '%%MANUAL%%')
+        AND (hf.outstanding_shares_final IS NOT NULL
+             OR hf.float_final IS NOT NULL
+             OR hf.tradable_float_final IS NOT NULL)
     ORDER BY hf.date_final DESC NULLS LAST, hf.filed_at DESC NULLS LAST
     LIMIT 1000
 """
