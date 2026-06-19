@@ -430,6 +430,22 @@
   .tier-discrepancy { background: var(--orange-bg); color: var(--orange); }
   .tier-minor { background: var(--yellow-bg); color: var(--yellow); }
   .tier-nochange { background: rgba(63, 185, 80, 0.15); color: var(--green); }
+  .tier-corrected { background: rgba(56, 139, 253, 0.15); color: var(--accent); }
+
+  .recency-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .recency-recent { background: var(--red-bg); color: var(--red); }
+  .recency-old { background: var(--yellow-bg); color: var(--yellow); }
+  .recency-veryold { background: var(--orange-bg); color: var(--orange); }
 
   .ai-analysis-body {
     font-size: 13px;
@@ -617,6 +633,7 @@
       <button type="button" class="mode-btn active" data-mode="date">Daily queue</button>
       <button type="button" class="mode-btn" data-mode="ticker">By ticker</button>
       <button type="button" class="mode-btn" data-mode="lowfloat">Low float</button>
+      <button type="button" class="mode-btn" data-mode="adr">ADR</button>
     </div>
 
     <form id="review-form-date" class="meta-row" style="margin-bottom:14px;">
@@ -644,6 +661,7 @@
           <option value="DISCREPANCY">Discrepancy</option>
           <option value="MINOR">Minor</option>
           <option value="NO CHANGE">No Change</option>
+          <option value="CORRECTED">Corrected</option>
           <option value="none">No analysis</option>
         </select>
       </label>
@@ -661,8 +679,14 @@
 
     <div id="review-form-lowfloat" class="meta-row" style="margin-bottom:14px;display:none;">
       <button type="button" class="primary" id="review-lowfloat-refresh">Refresh</button>
-      <span style="color:var(--dim);font-size:0.85em;">Records where float_final or tradable_float_final &lt; 300k (limit 100, ordered by filed_at)</span>
+      <span style="color:var(--dim);font-size:0.85em;">Records where float_final or tradable_float_final &lt; 300k (limit 50, ordered by filed_at)</span>
       <span id="review-summary-lowfloat" class="status" style="margin-left:auto;"></span>
+    </div>
+
+    <div id="review-form-adr" class="meta-row" style="margin-bottom:14px;display:none;">
+      <button type="button" class="primary" id="review-adr-refresh">Refresh</button>
+      <span style="color:var(--dim);font-size:0.85em;">ADR-flagged rows on a major exchange (limit 50, ordered by filed_at)</span>
+      <span id="review-summary-adr" class="status" style="margin-left:auto;"></span>
     </div>
 
     <div id="review-body"></div>
@@ -764,7 +788,10 @@ const escapeHtml = (s) => s == null ? "" : String(s)
 
 function askEdgarLink(ticker, filingUrl, label) {
   if (!filingUrl) return "—";
-  const url = `https://app.askedgar.io/filing?ticker=${encodeURIComponent(ticker || "")}&filingUrl=${encodeURIComponent(filingUrl)}`;
+  // Non-SEC URLs (e.g. Benzinga news) link directly instead of through the AskEdgar viewer.
+  const url = filingUrl.includes("sec.gov")
+    ? `https://app.askedgar.io/filing?ticker=${encodeURIComponent(ticker || "")}&filingUrl=${encodeURIComponent(filingUrl)}`
+    : filingUrl;
   return `<a href="${url}" target="_blank" rel="noopener">${escapeHtml(label || "Open")}</a>`;
 }
 
@@ -1645,6 +1672,8 @@ let reviewLoadedOnce = false;
 let reviewRowsByUrl = new Map();   // document_url -> row (server values)
 let reviewAllRows = [];             // unfiltered rows for client-side tier filter
 let dirtyByUrl = new Map();        // document_url -> { field: newValue }
+let lowFloatCache = null;          // cached low-float results (persists across tab switches)
+let adrCache = null;               // cached ADR results (persists across tab switches)
 let staleUrls = new Set();         // pinned rows that didn't match the SQL filter
 
 // Column sorting state (default: tradable_float_final ascending = lowest first)
@@ -1668,7 +1697,7 @@ function chicagoYesterdayISO() {
   return d.toISOString().slice(0, 10);
 }
 
-let reviewMode = "date"; // "date" | "ticker" | "lowfloat"
+let reviewMode = "date"; // "date" | "ticker" | "lowfloat" | "adr"
 
 function setReviewMode(mode, opts = {}) {
   reviewMode = mode;
@@ -1676,6 +1705,7 @@ function setReviewMode(mode, opts = {}) {
   document.getElementById("review-form-date").style.display     = mode === "date"     ? "" : "none";
   document.getElementById("review-form-ticker").style.display   = mode === "ticker"   ? "" : "none";
   document.getElementById("review-form-lowfloat").style.display = mode === "lowfloat" ? "" : "none";
+  document.getElementById("review-form-adr").style.display      = mode === "adr"      ? "" : "none";
   // URL state
   const u = new URL(window.location);
   u.searchParams.set("rmode", mode);
@@ -1698,7 +1728,21 @@ document.querySelectorAll(".mode-btn").forEach((b) => {
     if (b.dataset.mode === reviewMode) return;
     setReviewMode(b.dataset.mode);
     if (reviewMode === "date") loadReview();
-    else if (reviewMode === "lowfloat") loadReview();
+    else if (reviewMode === "lowfloat") {
+      // Restore from cache if available, otherwise fetch
+      if (lowFloatCache) {
+        restoreLowFloatCache();
+      } else {
+        loadReview();
+      }
+    }
+    else if (reviewMode === "adr") {
+      if (adrCache) {
+        restoreAdrCache();
+      } else {
+        loadReview();
+      }
+    }
     else if (document.getElementById("review-ticker").value) loadReview();
   });
 });
@@ -1716,6 +1760,11 @@ document.getElementById("review-back-to-daily").addEventListener("click", () => 
   loadReview();
 });
 document.getElementById("review-lowfloat-refresh").addEventListener("click", () => {
+  lowFloatCache = null;  // clear cache so it re-queries
+  loadReview();
+});
+document.getElementById("review-adr-refresh").addEventListener("click", () => {
+  adrCache = null;  // clear cache so it re-queries
   loadReview();
 });
 document.getElementById("review-today").addEventListener("click", () => {
@@ -1746,6 +1795,9 @@ async function loadReview() {
   }
   if (reviewMode === "lowfloat") {
     return loadReviewByLowFloat();
+  }
+  if (reviewMode === "adr") {
+    return loadReviewByAdr();
   }
   return loadReviewByDate();
 }
@@ -1837,10 +1889,52 @@ async function loadReviewByLowFloat() {
     return;
   }
   reviewRowsByUrl = new Map(data.results.map((r) => [r.document_url, r]));
+  reviewAllRows = data.results;
   dirtyByUrl = new Map();
   staleUrls = new Set();
+  lowFloatCache = { results: data.results, count: data.count };
   summary.innerHTML = `<strong>${data.count}</strong> records with float &lt; 300k`;
   renderReviewTable(data.results);
+}
+
+function restoreLowFloatCache() {
+  const summary = document.getElementById("review-summary-lowfloat");
+  reviewRowsByUrl = new Map(lowFloatCache.results.map((r) => [r.document_url, r]));
+  reviewAllRows = lowFloatCache.results;
+  dirtyByUrl = new Map();
+  staleUrls = new Set();
+  summary.innerHTML = `<strong>${lowFloatCache.count}</strong> records with float &lt; 300k (cached)`;
+  renderReviewTable(lowFloatCache.results);
+}
+
+async function loadReviewByAdr() {
+  const summary = document.getElementById("review-summary-adr");
+  summary.textContent = "";
+  let data;
+  try {
+    data = await fetch("/api/review?mode=adr").then((r) => r.json());
+    if (data.status !== "success") throw new Error(data?.error?.message || "ADR query failed");
+  } catch (e) {
+    setError("review-body", `Failed to load ADR records: ${e.message}`);
+    return;
+  }
+  reviewRowsByUrl = new Map(data.results.map((r) => [r.document_url, r]));
+  reviewAllRows = data.results;
+  dirtyByUrl = new Map();
+  staleUrls = new Set();
+  adrCache = { results: data.results, count: data.count };
+  summary.innerHTML = `<strong>${data.count}</strong> ADR records`;
+  renderReviewTable(data.results);
+}
+
+function restoreAdrCache() {
+  const summary = document.getElementById("review-summary-adr");
+  reviewRowsByUrl = new Map(adrCache.results.map((r) => [r.document_url, r]));
+  reviewAllRows = adrCache.results;
+  dirtyByUrl = new Map();
+  staleUrls = new Set();
+  summary.innerHTML = `<strong>${adrCache.count}</strong> ADR records (cached)`;
+  renderReviewTable(adrCache.results);
 }
 
 async function loadReviewByTicker() {
@@ -2016,7 +2110,7 @@ function renderReviewRow(r) {
       <td>${fmtDate(r.date_final)}</td>
       <td>${fmtDate(r.filed_at)}</td>
       <td class="note">${escapeHtml(r.category || "")}</td>
-      <td>${aiTierHtml(r.ai_analysis)}</td>
+      <td class="ai-tier-cell">${aiTierHtml(r.ai_analysis)}</td>
       <td class="num">${checkValues}${checkDiff}</td>
       <td>${numInput("outstanding_shares", r.outstanding_shares)}</td>
       <td>${numInput("outstanding_shares_reported", r.outstanding_shares_reported)}</td>
@@ -2271,6 +2365,7 @@ function openReviewPanel(url) {
 
 function aiTier(analysis) {
   if (!analysis) return null;
+  if (analysis.trim().toUpperCase().startsWith("CORRECTED")) return "CORRECTED";
   const m = analysis.match(/^TIER:\s*(.+)/im);
   if (!m) return null;
   const raw = m[1].trim().toUpperCase();
@@ -2290,9 +2385,45 @@ function aiTierHtml(analysis) {
 
 function renderAiAnalysis(r) {
   if (r.ai_analysis) {
-    return `<div class="ai-analysis-text">${escapeHtml(r.ai_analysis)}</div>`;
+    return `<textarea class="ai-analysis-edit" data-url="${escapeHtml(r.document_url)}" data-field="ai_analysis" rows="10" style="width:100%;font-size:12px;font-family:inherit;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:8px;resize:vertical;">${escapeHtml(r.ai_analysis)}</textarea>
+    <div style="margin-top:4px;display:flex;gap:6px;align-items:center;">
+      <button class="primary" style="font-size:11px;padding:3px 10px;" onclick="saveAiAnalysis(this)">Save</button>
+      <span class="ai-analysis-save-status" style="font-size:11px;color:var(--dim);"></span>
+    </div>`;
   }
   return `<div class="ai-analysis-loading">Analyzing — please keep this panel open. May take 30–60s…</div>`;
+}
+
+async function saveAiAnalysis(btn) {
+  const container = btn.closest("#ai-analysis-body");
+  const textarea = container.querySelector(".ai-analysis-edit");
+  const status = container.querySelector(".ai-analysis-save-status");
+  const url = textarea.dataset.url;
+  const value = textarea.value;
+  status.textContent = "Saving...";
+  try {
+    const res = await fetch("/api/review/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ document_url: url, updates: { ai_analysis: value } }),
+    });
+    const j = await res.json();
+    if (!res.ok || j.status !== "success") throw new Error(j?.error?.message || "save failed");
+    // Update local cache
+    const row = reviewRowsByUrl.get(url);
+    if (row) row.ai_analysis = value;
+    // Update the tier badge in the table row
+    const tr = document.querySelector(`#review-body tr[data-url="${cssEscape(url)}"]`);
+    if (tr) {
+      const tierCell = tr.querySelector(".ai-tier-cell");
+      if (tierCell) tierCell.innerHTML = aiTierHtml(value);
+    }
+    status.textContent = "Saved";
+    status.style.color = "var(--green, #3fb950)";
+  } catch (e) {
+    status.textContent = `Error: ${e.message}`;
+    status.style.color = "var(--red, #f85149)";
+  }
 }
 
 async function triggerAiAnalysis(url, force) {
@@ -2334,6 +2465,27 @@ function closeReviewPanel() {
   document.querySelectorAll("#review-body tr.active").forEach((tr) => tr.classList.remove("active"));
 }
 
+// Badge describing how current this row's reported date (date_final) is.
+//   MOST RECENT (red)  — date_final is the latest for this ticker across all history
+//   VERY OLD (orange)  — reported date lags the filing date by more than 6 months
+//   OLD (yellow)       — a newer record exists for this ticker, but not very stale
+function recencyBadge(r) {
+  const df = r.date_final;
+  if (!df) return "";
+  if (r.ticker_max_date_final && df === r.ticker_max_date_final) {
+    return `<span class="recency-badge recency-recent">MOST RECENT</span>`;
+  }
+  if (r.filed_at) {
+    const reported = new Date(df + "T00:00:00Z");
+    const sixMoLater = new Date(reported);
+    sixMoLater.setUTCMonth(sixMoLater.getUTCMonth() + 6);
+    if (new Date(r.filed_at + "T00:00:00Z") > sixMoLater) {
+      return `<span class="recency-badge recency-veryold">VERY OLD</span>`;
+    }
+  }
+  return `<span class="recency-badge recency-old">OLD</span>`;
+}
+
 function renderReviewPanel(r) {
   const url = r.document_url;
   const LOW = 300000;
@@ -2345,8 +2497,8 @@ function renderReviewPanel(r) {
   document.getElementById("review-panel").classList.add("panel-wide");
   document.getElementById("panel-title").innerHTML =
     `<strong>${escapeHtml(r.ticker || "—")}</strong>${dilutionLinks(r.ticker)} &nbsp;<span class="form-pill">${escapeHtml(r.form_type || "—")}</span>`;
-  document.getElementById("panel-subtitle").textContent =
-    `Reported ${fmtDate(r.date_final)} · Filed ${fmtDate(r.filed_at)}`;
+  document.getElementById("panel-subtitle").innerHTML =
+    `Reported ${fmtDate(r.date_final)} · Filed ${fmtDate(r.filed_at)}${recencyBadge(r)}`;
 
   const numInput = (col, val) => {
     const display = (val == null || val === "") ? "" : String(val);
@@ -2430,6 +2582,10 @@ function renderReviewPanel(r) {
         <div class="panel-section">
           <h4>Recent Offerings</h4>
           <div id="panel-offerings-body" class="status">Loading…</div>
+        </div>
+        <div class="panel-section">
+          <h4>Historical Outstanding</h4>
+          <div id="panel-historical-body" class="status">Loading…</div>
         </div>
         <div class="panel-section">
           <h4>Source filing</h4>
@@ -2530,6 +2686,63 @@ function renderReviewPanel(r) {
         if (body) body.innerHTML = `<div class="status" style="color:var(--red);">Failed: ${escapeHtml(e.message)}</div>`;
       });
   }
+
+  // Fetch prior historical_float_final records (Postgres _final values) for this ticker.
+  if (r.ticker) {
+    fetch(`/api/historical-postgres?ticker=${encodeURIComponent(r.ticker)}`)
+      .then((res) => res.json())
+      .then((d) => {
+        const panel = document.getElementById("review-panel");
+        if (!panel.classList.contains("open") || panel.dataset.url !== url) return;
+        const body = document.getElementById("panel-historical-body");
+        if (!body) return;
+        body.classList.remove("status");
+        body.innerHTML = renderPanelHistorical(d.results || [], r);
+      })
+      .catch((e) => {
+        const body = document.getElementById("panel-historical-body");
+        if (body) body.innerHTML = `<div class="status" style="color:var(--red);">Failed: ${escapeHtml(e.message)}</div>`;
+      });
+  }
+}
+
+// Prior historical records (strictly before this row's date_final), most recent first.
+function renderPanelHistorical(rows, current) {
+  const curDate = current.date_final || "";
+  const prior = rows
+    .filter((h) => h.document_url !== current.document_url
+      && h.date_final && (!curDate || h.date_final < curDate)
+      && !String(h.form_type || "").toUpperCase().includes("MANUAL")
+      && (num(h.outstanding_shares_final) != null || num(h.float_final) != null || num(h.tradable_float_final) != null))
+    .sort((a, b) => String(b.date_final || "").localeCompare(String(a.date_final || "")))
+    .slice(0, 5);
+  if (!prior.length) return `<div class="status">No prior records.</div>`;
+  return `
+    <table style="font-size:12px;">
+      <thead><tr>
+        <th>Reported</th>
+        <th>Form</th>
+        <th class="num">OS Final</th>
+        <th class="num">Float Final</th>
+        <th class="num">Tradable Final</th>
+        <th class="num">Affiliate</th>
+        <th class="num">ADS Ratio</th>
+      </tr></thead>
+      <tbody>
+        ${prior.map((h) => `
+          <tr>
+            <td>${fmtDate(h.date_final)}</td>
+            <td>${askEdgarLink(h.ticker, h.document_url, h.form_type || "—")}</td>
+            <td class="num">${fmtInt(h.outstanding_shares_final)}</td>
+            <td class="num">${fmtInt(h.float_final)}</td>
+            <td class="num">${fmtInt(h.tradable_float_final)}</td>
+            <td class="num">${fmtInt(h.affiliate_shares)}</td>
+            <td class="num">${h.ads_ratio == null || h.ads_ratio === "" ? "—" : h.ads_ratio}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
 }
 
 function renderPanelOfferings(rows) {
@@ -2608,7 +2821,7 @@ const params = new URLSearchParams(window.location.search);
 const initialTab = params.get("tab");
 // Restore review queue mode/state from URL.
 const rmodeParam = params.get("rmode");
-const initialMode = rmodeParam === "ticker" ? "ticker" : rmodeParam === "lowfloat" ? "lowfloat" : "date";
+const initialMode = ["ticker", "lowfloat", "adr"].includes(rmodeParam) ? rmodeParam : "date";
 const initialReviewTicker = (params.get("rt") || "").toUpperCase();
 if (initialMode === "ticker") {
   if (initialReviewTicker) {
@@ -2617,6 +2830,8 @@ if (initialMode === "ticker") {
   setReviewMode("ticker");
 } else if (initialMode === "lowfloat") {
   setReviewMode("lowfloat");
+} else if (initialMode === "adr") {
+  setReviewMode("adr");
 } else {
   setReviewMode("date");
 }

@@ -48,9 +48,19 @@ ASKEDGAR_BASE = "https://eapi.askedgar.io"
 SECAPI_URL = "https://api.sec-api.io"
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_MODEL = "claude-opus-4-7"
+# Cheap/fast model for pre-extracting relevant excerpts from long filings.
+EXTRACT_MODEL = "claude-haiku-4-5-20251001"
 
-# ~5000 tokens worth of filing text. 1 token ~= 4 chars for English prose.
-FILING_TEXT_MAX_CHARS = 20000
+# Filing-text handling (1 token ~= 4 chars for English prose):
+#   - Pull up to FILING_FETCH_MAX_CHARS from Elasticsearch (cap to bound memory + extractor context).
+#   - If the text is longer than FILING_EXCERPT_THRESHOLD_CHARS (~15k tokens), run a cheap-model
+#     pre-extraction to pull only the share-relevant excerpts; otherwise pass the full text through.
+#   - If extraction finds nothing, fall back to a hard truncation of FILING_TRUNCATE_CHARS.
+FILING_FETCH_MAX_CHARS = 700000          # ~175k tokens — safely under Haiku's 200k context
+FILING_EXCERPT_THRESHOLD_CHARS = 60000   # ~15k tokens
+FILING_TRUNCATE_CHARS = 20000            # fallback when pre-extraction yields nothing
+# Back-compat alias (kept so existing references don't break).
+FILING_TEXT_MAX_CHARS = FILING_TRUNCATE_CHARS
 
 DB_CONFIG = {
     **_CFG["postgres"],
@@ -71,6 +81,7 @@ EDITABLE_COLUMNS = {
     "ads_ratio": "numeric",
     "is_adr": "boolean",
     "notes": "text",
+    "ai_analysis": "text",
 }
 
 HISTORICAL_COLUMNS = """
@@ -115,7 +126,14 @@ REVIEW_COLUMNS = """
     hf.notes,
     hf.ai_analysis,
     hf.market_cap,
-    hf.updated_at
+    hf.updated_at,
+    (SELECT MAX(h2.date_final) FROM historical_float_final h2
+       WHERE h2.ticker = hf.ticker
+         AND (h2.form_type IS NULL OR h2.form_type NOT LIKE '%%MANUAL%%')
+         AND (h2.outstanding_shares_final IS NOT NULL
+              OR h2.float_final IS NOT NULL
+              OR h2.tradable_float_final IS NOT NULL)
+    ) AS ticker_max_date_final
 """
 
 EXCHANGE_JOIN = """
@@ -131,9 +149,12 @@ REVIEW_QUERY = f"""
     WHERE
         hf.filed_at = %(filed_at)s
         AND (
+            -- Share-issuance path: always show if details flags a share issuance,
+            -- regardless of exchange / category / value thresholds.
+            hf.details ILIKE '%%Share issuance via%%'
             -- Test-value diff path: bypass every other filter when the
             -- secondary extractor disagrees with our finals by >20 percent.
-            (
+            OR (
                 hf.test_outstanding IS NOT NULL
                 AND hf.outstanding_shares_final IS NOT NULL
                 AND hf.outstanding_shares_final <> 0
@@ -147,14 +168,22 @@ REVIEW_QUERY = f"""
                 AND ABS(hf.test_float - hf.tradable_float_final)
                     > 0.20 * ABS(hf.tradable_float_final)
             )
+            -- Missing-OS path: outstanding_shares_final is null but float data exists,
+            -- so the row is reviewable and the OS likely failed extraction.
+            OR (
+                hf.outstanding_shares_final IS NULL
+                AND (hf.float_final IS NOT NULL OR hf.tradable_float_final IS NOT NULL)
+                AND hf.form_type NOT LIKE '%%MANUAL%%'
+                AND hf.ticker IS NOT NULL
+            )
             OR (
                 hf.form_type NOT LIKE '%%MANUAL%%'
                 AND hf.ticker IS NOT NULL
                 AND (
-                    -- Sub-1M finals bypass category AND exchange filters (most critical)
-                    hf.outstanding_shares_final < 1000000
-                    OR hf.float_final < 1000000
-                    OR hf.tradable_float_final < 1000000
+                    -- Sub-2M finals bypass category AND exchange filters (most critical)
+                    hf.outstanding_shares_final < 2000000
+                    OR hf.float_final < 2000000
+                    OR hf.tradable_float_final < 2000000
                     -- Normal path: must be on major exchange + category match + under-10M or ADR
                     OR (
                         s.ticker IS NOT NULL
@@ -193,9 +222,199 @@ REVIEW_LOW_FLOAT_QUERY = f"""
     WHERE (hf.float_final < 300000 OR hf.tradable_float_final < 300000)
         AND hf.float_final IS NOT NULL
         AND hf.ticker IS NOT NULL
+        AND (hf.ai_analysis IS NULL OR hf.ai_analysis NOT LIKE 'CORRECTED%%')
+        AND COALESCE(s.industry, '') <> 'Shell Companies'
+        AND COALESCE(s.companyname, '') NOT ILIKE '%%Acquisition Corp%%'
     ORDER BY hf.filed_at DESC NULLS LAST
-    LIMIT 100
+    LIMIT 50
 """
+
+# ADR mode: rows flagged as ADR (by either source). No float cap; same exclusions
+# as low-float (major exchange, not CORRECTED, not Shell / Acquisition Corp).
+REVIEW_ADR_QUERY = f"""
+    SELECT {REVIEW_COLUMNS}
+    FROM historical_float_final hf
+    {EXCHANGE_JOIN}
+    WHERE (hf.is_adr = true OR s.isadr = true)
+        AND hf.ticker IS NOT NULL
+        AND (hf.outstanding_shares_final IS NOT NULL
+             OR hf.float_final IS NOT NULL
+             OR hf.tradable_float_final IS NOT NULL)
+        AND (hf.ai_analysis IS NULL OR hf.ai_analysis NOT LIKE 'CORRECTED%%')
+        AND COALESCE(s.industry, '') <> 'Shell Companies'
+        AND COALESCE(s.companyname, '') NOT ILIKE '%%Acquisition Corp%%'
+    ORDER BY hf.filed_at DESC NULLS LAST
+    LIMIT 50
+"""
+
+
+# Shared output format — MUST stay identical across prompts so the UI's TIER parsing works.
+AI_OUTPUT_FORMAT = (
+    "=== OUTPUT FORMAT (follow exactly) ===\n"
+    "Use this exact structure with plain text (no markdown headers, no bold):\n\n"
+    "TIER: <one of the following>\n"
+    "  CRITICAL - negative float/tradable_float, or float < 200k\n"
+    "  DISCREPANCY - 30%+ change from previous record not explained by a split\n"
+    "  MINOR - small discrepancy under ~20%, or cosmetic issue\n"
+    "  NO CHANGE NECESSARY - values look correct\n\n"
+    "EXPLANATION: 2-4 sentences explaining the issue (or confirming values are fine). Be concise.\n\n"
+    "RECOMMENDED CHANGES:\n"
+    "If changes are needed, list each field that should change as a bullet:\n"
+    "- outstanding_shares / outstanding_shares_reported: <value>\n"
+    "- affiliate_shares: <value>\n"
+    "- restricted_shares: <value>\n"
+    "- float: <value>\n"
+    "- ads_ratio: <value>   (for ADR rows missing or with a wrong ratio)\n"
+    "(only list fields that need changing)\n"
+    "If no changes are needed, write: No changes recommended.\n\n"
+    "Keep the whole output compact -- this displays inside a small side panel."
+)
+
+# Governing rule shared by EVERY prompt: values must reflect the state AS OF date_final.
+AS_OF_PRINCIPLE = (
+    "=== GOVERNING RULE: VALUES MUST MATCH date_final (THE 'AS OF' DATE) ===\n"
+    "The share counts on this row must reflect the company's ACTUAL outstanding / float / etc. AS OF date_final "
+    "(the reported 'as of' date). date_final is the date of record and GOVERNS -- regardless of how the source "
+    "document frames itself. A filing may describe a 'pre-offering' snapshot, say 'shares outstanding prior to "
+    "this offering', or use a cover-page convenience date; IGNORE that framing and ask only: what were the share "
+    "counts AS OF date_final?\n"
+    "- If a corporate event (offering / share issuance, debt conversion, warrant exercise, buyback, split) took "
+    "effect ON OR BEFORE date_final, its effect MUST already be reflected in the values. If the row shows "
+    "PRE-event values while date_final is on/after the event, that is wrong -> DISCREPANCY (or CRITICAL): "
+    "recommend the corrected post-event values.\n"
+    "- If the event took effect AFTER date_final, then the pre-event values ARE correct for this row.\n"
+    "- DO NOT excuse an as-of mismatch by saying the correct post-event value is captured in a different/separate "
+    "record. Each row must be correct as of ITS OWN date_final; another record existing does not make this one "
+    "right.\n"
+    "- There are only two self-consistent states: (a) date_final is BEFORE the event AND values are pre-event, or "
+    "(b) date_final is ON/AFTER the event AND values are post-event. If you see pre-event values with an "
+    "on/after date_final (or vice-versa), call out the inconsistency explicitly and state the fix -- either the "
+    "share amounts should be updated to match date_final, or date_final should be moved to match the values.\n\n"
+)
+
+# Prompt for non-ADR rows.
+STANDARD_AI_PROMPT = (
+    "You are a data analyst at AskEdgar reviewing a single historical_float_final row. "
+    "Your job: tell the analyst whether the OS / float values look correct, or flag possible reasons they may be wrong.\n\n"
+    "When SOURCE FILING TEXT is provided, it is the most authoritative input -- it is the actual filing text "
+    "the OS / float values were extracted from. Cross-check the row's outstanding_shares against numbers in "
+    "the filing text and call out any mismatch (wrong number picked, share class confused, percent vs absolute, etc.).\n\n"
+    "Things to look for:\n"
+    "- float_final or tradable_float_final < 500k or negative -> often means affiliate_shares or restricted_shares is wrong. "
+    "Check recent offerings + news for share issuances that should have been counted as restricted.\n"
+    "- A big drop in OS or float vs the previous historical record may be normal if a reverse split happened around that date. "
+    "Confirm by checking the most recent reverse split.\n"
+    "- CRITICAL split logic: compare the row's date_final (the 'as of' / reported date) to the split's execution_date. "
+    "If date_final is BEFORE the split execution_date, ALL share counts on this row MUST be pre-split values. "
+    "If any field (affiliate_shares, insider_shares, five_percent_shareholders, outstanding_shares, etc.) appears to be "
+    "post-split while date_final is pre-split, give a clear directive: 'Analyst should multiply [field] by [split_from/split_to] "
+    "to convert back to pre-split values.' Do NOT present this as optional or offer the reverse alternative. "
+    "The rule is absolute: date_final before split -> all values must be pre-split. "
+    "Only if date_final is AFTER the split execution_date should the numbers reflect post-split values.\n"
+    "- For split-affected rows: verify the split actually occurred. Post-split price should usually be > $1, "
+    "and recent news should mention the effective date.\n"
+    "- If outstanding_final is very low, check whether outstanding_shares (raw) and outstanding_shares_reported diverge sharply, "
+    "or whether the AI may have extracted the wrong number from the source filing -- the FILING TEXT will tell you.\n"
+    "- If this looks like an ADR / foreign issuer (ADSs mentioned in the filing) but is_adr is not set, note that the row "
+    "may need is_adr and ads_ratio populated and should be reviewed as an ADR.\n"
+    "- Most important red flags: OS or float < 500k (especially < 100k or negative). "
+    "Negatives are almost always wrong, unless the company is a brand-new SPAC or similar.\n"
+    "- MISSING VALUES: if any of outstanding_shares, float, or tradable_float on the row is null/missing, "
+    "try to determine the correct value from the FILING TEXT, ownership data, offerings, and recent historical "
+    "records. Include your best determination as a bullet in RECOMMENDED CHANGES. If the available context is "
+    "insufficient to determine it, say so explicitly in the EXPLANATION rather than guessing.\n"
+    "- CRITICAL: the SCREENER block is today's current values, not truth for this row. "
+    "Do NOT recommend changes by comparing the row to screener -- the row may legitimately be more "
+    "current than the screener (it can reflect a brand-new issuance from its source filing) OR "
+    "the row may be historical (date_final in the past). For a historical date_final, the question "
+    "is 'were these values correct AS OF date_final', so the screener's current snapshot is largely "
+    "irrelevant. Use the screener only as a rough magnitude sanity check (e.g. an obviously-wrong "
+    "10x discrepancy in either direction); do not flag a discrepancy 'because screener says X'.\n\n"
+    + AS_OF_PRINCIPLE
+    + AI_OUTPUT_FORMAT
+)
+
+# Prompt for ADR rows (is_adr true on the row OR on the screener). ADR-specific concerns lead.
+ADR_AI_PROMPT = (
+    "You are a data analyst at AskEdgar reviewing a single historical_float_final row for an ADR / ADS-listed company "
+    "(a foreign issuer trading in the US via American Depositary Shares). Your job: tell the analyst whether the "
+    "OS / float values look correct, with SPECIAL ATTENTION to ADR-specific pitfalls.\n\n"
+    "When SOURCE FILING TEXT is provided, it is the most authoritative input -- the actual filing the values were "
+    "extracted from. Cross-check the row's numbers against it.\n\n"
+    "ADR-SPECIFIC CHECKS (these are the priority):\n"
+    "1. ORDINARY SHARES, NOT ADSs: outstanding_shares, outstanding_shares_reported, float, and tradable_float MUST be "
+    "expressed in the underlying ORDINARY (common) shares, NEVER in ADSs/ADRs. Foreign filings (20-F, 6-K, F-1) routinely "
+    "report ADS counts. If the row's values match an 'ADSs outstanding' figure in the FILING TEXT, or look far too small "
+    "versus the ordinary-share count implied by market cap / price, the wrong unit was captured. This is a serious data "
+    "error -> tier CRITICAL. Give the corrected ordinary-share value (ordinary = ADS_count * ads_ratio) in RECOMMENDED CHANGES.\n"
+    "2. ads_ratio IS REQUIRED: ads_ratio = number of ordinary shares per 1 ADS. It must be present for an ADR row. "
+    "If ads_ratio is null/blank, FLAG IT (tier at least DISCREPANCY) -- FIRST check the recent HISTORICAL FLOAT RECORDS "
+    "below: if a recent prior record for this ticker has an ads_ratio, that value is the strongest candidate (confirm it "
+    "against the FILING TEXT if possible) -- recommend it. Otherwise determine it from the FILING TEXT or deposit-agreement "
+    "language (e.g. 'each ADS represents 10 ordinary shares' -> ads_ratio=10) and put it in RECOMMENDED CHANGES. If it cannot "
+    "be determined from any source, say so explicitly in the EXPLANATION (do NOT guess a ratio). "
+    "If this row's ads_ratio DIFFERS from recent prior records with no corporate action (e.g. ratio change / split) "
+    "explaining it, flag that as suspicious.\n"
+    "3. RECONCILE: outstanding_shares (ordinary) should roughly equal the reported ADSs * ads_ratio. If they don't "
+    "reconcile, explain the discrepancy and recommend the corrected value. Also compare this row's share counts to the "
+    "recent HISTORICAL FLOAT RECORDS and the current SCREENER -- an order-of-magnitude jump/drop versus recent ordinary-share "
+    "counts often means ADSs were captured instead of ordinary shares (or vice versa).\n\n"
+    "ALSO CHECK (general):\n"
+    "- Negative or very low float/tradable_float (< 200k, especially < 100k or negative) is almost always wrong -- usually "
+    "an affiliate_shares / restricted_shares error. Check offerings + news for issuances.\n"
+    "- Reverse split vs date_final: compare date_final (the 'as of' date) to the split execution_date. If date_final is "
+    "BEFORE the split, ALL share counts MUST be pre-split; if a field looks post-split, direct the analyst to multiply by "
+    "[split_from/split_to] to convert back. The rule is absolute -- do not offer the reverse.\n"
+    "- MISSING VALUES: if outstanding_shares, float, or tradable_float is null, try to determine it from the filing text / "
+    "ownership / offerings / historical records and put it in RECOMMENDED CHANGES; if not determinable, say so.\n"
+    "- SCREENER is today's snapshot, NOT truth for a historical row. Use it only as a rough magnitude sanity check; for a "
+    "historical date_final, judge against what was true then (filing, contemporaneous offerings/news, adjacent records).\n\n"
+    + AS_OF_PRINCIPLE
+    + AI_OUTPUT_FORMAT
+)
+
+# Body of the share-issuance prompt (output format appended at call time, after an optional ADR note).
+SHARE_ISSUANCE_BODY = (
+    "You are a data analyst at AskEdgar reviewing a historical_float_final row that represents a SHARE ISSUANCE "
+    "EVENT (the row's details/category indicate a share issuance). The source document is about the issuance "
+    "itself -- a DEBT CONVERSION, PRIVATE PLACEMENT, REGISTERED OFFERING, WARRANT EXERCISE, or SHARE ISSUANCE FOR "
+    "ACQUISITION -- and does NOT necessarily state the company's total outstanding share count.\n\n"
+    "HOW THESE ROWS ARE BUILT: the newly issued shares are ADDED to the most recently reported outstanding share "
+    "count. The correct outstanding_shares for this row should equal:\n"
+    "    (most recent PRIOR outstanding shares) + (shares issued in this event).\n"
+    "Your job is to verify that math and flag problems.\n\n"
+    "STEPS:\n"
+    "1. ISSUED SHARES: determine the number of shares issued in this event from the SOURCE FILING and RECENT "
+    "OFFERINGS (e.g. shares sold in the offering, shares issued on conversion, warrant shares exercised, shares "
+    "issued for the acquisition).\n"
+    "2. PRIOR OUTSTANDING: take the most recent prior outstanding share count from the HISTORICAL FLOAT RECORDS "
+    "block (our authoritative computed _final values from Postgres), using the latest record dated before this "
+    "row's date_final.\n"
+    "3. RECONCILE: confirm this row's outstanding_shares ~= prior outstanding + issued. If it doesn't reconcile, "
+    "explain and give the corrected value in RECOMMENDED CHANGES.\n"
+    "4. PREFUNDED WARRANTS: prefunded warrants are normally counted as outstanding shares (they are typically "
+    "exercised immediately for nominal consideration). HOWEVER, if the prefunded warrants in this issuance are a "
+    "SIGNIFICANT amount -- more than 20% of the outstanding shares -- FLAG that they should NOT be included in the "
+    "outstanding share count, and give the outstanding figure excluding them.\n"
+    "5. RESTRICTED SHARES: if this issuance is a PRIVATE PLACEMENT or a SHARE ISSUANCE FOR ACQUISITION, the issued "
+    "shares are RESTRICTED. The row's restricted_shares should equal (prior restricted_shares from the HISTORICAL "
+    "FLOAT RECORDS block) + (shares issued). If restricted_shares was not updated accordingly, recommend the corrected value. "
+    "For a REGISTERED OFFERING, WARRANT EXERCISE, or DEBT CONVERSION, do NOT add the issued shares to "
+    "restricted_shares unless the filing explicitly states the shares are restricted / unregistered.\n"
+    "6. TIMING: if the issuance will occur AFTER this row's date_final (e.g. 'shares to be outstanding after the "
+    "offering' where the offering closes later), the pre-issuance outstanding count is correct for this row -- do "
+    "NOT add shares that have not been issued yet. Likewise avoid double-counting an issuance already reflected in "
+    "a prior record.\n\n"
+    "Also apply the general checks: negative/very-low float is almost always wrong; respect reverse-split vs "
+    "date_final pre/post-split logic; the SCREENER is only a current snapshot, not truth for a historical row.\n\n"
+)
+
+# Short ADR addendum appended to the share-issuance prompt when the issuer is an ADR.
+SHARE_ISSUANCE_ADR_NOTE = (
+    "ADR NOTE (this issuer is an ADR): express ALL share counts in ORDINARY shares, not ADSs. If the issuance is "
+    "stated in ADSs, convert with ads_ratio (ordinary = ADSs * ads_ratio) BEFORE adding to the prior ordinary-share "
+    "count. ads_ratio must be present; if it is missing, flag it and recommend a value.\n\n"
+)
 
 
 def _json_default(obj):
@@ -319,6 +538,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 {
                     "status": "success",
                     "mode": "lowfloat",
+                    "count": len(rows),
+                    "results": rows,
+                },
+            )
+            return
+
+        if mode == "adr":
+            with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(REVIEW_ADR_QUERY)
+                rows = cur.fetchall()
+            self._send_json(
+                200,
+                {
+                    "status": "success",
+                    "mode": "adr",
                     "count": len(rows),
                     "results": rows,
                 },
@@ -477,7 +711,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                f"SELECT {HISTORICAL_COLUMNS} FROM historical_float_final WHERE document_url = %s",
+                f"SELECT {HISTORICAL_COLUMNS}, "
+                "(SELECT s.isadr FROM screener s WHERE s.ticker = historical_float_final.ticker LIMIT 1) AS screener_isadr "
+                "FROM historical_float_final WHERE document_url = %s",
                 (document_url,),
             )
             row = cur.fetchone()
@@ -567,9 +803,60 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 break
         if not text:
             return None
-        if len(text) > FILING_TEXT_MAX_CHARS:
-            text = text[:FILING_TEXT_MAX_CHARS] + "\n\n[...truncated...]"
+        if len(text) > FILING_FETCH_MAX_CHARS:
+            text = text[:FILING_FETCH_MAX_CHARS] + "\n\n[...truncated...]"
         return text
+
+    @staticmethod
+    def _extract_filing_excerpts(text):
+        """Use a cheap/fast model (Haiku) to pull VERBATIM share-relevant excerpts from a long
+        filing, so the main analysis model reasons over the right passages instead of an
+        arbitrary leading slice. Returns delimited excerpts, or None if nothing relevant / error."""
+        if not ANTHROPIC_KEY:
+            return None
+        system_prompt = (
+            "You are extracting excerpts from the full text of an SEC filing or press release. "
+            "Output, VERBATIM, every passage relevant to the company's share structure, specifically:\n"
+            "- total shares outstanding (common / ordinary), with the 'as of' date\n"
+            "- shares broken out by class when there are multiple classes\n"
+            "- float / tradable float / shares held by affiliates or insiders / restricted shares\n"
+            "- ADS / ADR ratio language (e.g. 'each ADS represents N ordinary shares')\n"
+            "- reverse splits or share consolidations and their effective dates\n"
+            "- shares outstanding before/after an offering or private placement\n"
+            "Output each excerpt exactly as it appears -- do NOT paraphrase, summarize, or compute. "
+            "Separate distinct excerpts with a line containing only '-----'. "
+            "If share amounts are stated in thousands or millions, add a short bracketed note after that "
+            "excerpt, e.g. [values in thousands]. "
+            "If the filing contains NO information about share counts, output exactly 'N/A'. "
+            "Never output anything that is not present in the filing."
+        )
+        payload = {
+            "model": EXTRACT_MODEL,
+            "max_tokens": 4000,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": f"Full filing text:\n\n{text}"}],
+        }
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            ANTHROPIC_URL,
+            data=body,
+            headers={
+                "x-api-key": ANTHROPIC_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                parsed = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return None  # caller falls back to truncation
+        parts = [b.get("text", "") for b in (parsed.get("content") or []) if b.get("type") == "text"]
+        out = ("\n".join(parts)).strip()
+        if not out or out.upper().startswith("N/A"):
+            return None
+        return out
 
     def _gather_ai_context(self, ticker, row):
         ctx = {}
@@ -579,18 +866,44 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             try:
                 txt = self._get_filing_text(row.get("document_url"))
                 if txt:
-                    ctx["filing_text"] = txt
+                    if len(txt) > FILING_EXCERPT_THRESHOLD_CHARS:
+                        # Long filing: pre-extract the share-relevant excerpts with a cheap model
+                        # so the main model sees the right passages, not just a leading slice.
+                        excerpts = self._extract_filing_excerpts(txt)
+                        if excerpts:
+                            ctx["filing_text"] = excerpts
+                            ctx["filing_text_excerpts"] = True
+                        else:
+                            ctx["filing_text"] = txt[:FILING_TRUNCATE_CHARS] + "\n\n[...truncated...]"
+                            ctx["filing_text_truncated"] = True
+                    else:
+                        ctx["filing_text"] = txt
             except Exception as e:
                 ctx["filing_text_error"] = str(e)
 
-        # Historical float (5 most recent, excluding the row itself if it appears)
+        # Historical float records — from Postgres (our computed _final values + restricted_shares),
+        # strictly before this row's date_final, MANUAL excluded, with at least one final present.
+        # This replaces the AskEdgar historical-float-pro feed (which lacks _final and restricted_shares).
         try:
-            hist = self._askedgar_get("/v1/historical-float-pro", {"ticker": ticker, "limit": 10, "page": 1})
-            results = (hist or {}).get("results") or []
-            results = [r for r in results if r.get("document_url") != row.get("document_url")][:5]
-            ctx["historical_float"] = results
+            sql = (
+                "SELECT date_final, filed_at, form_type, document_url, outstanding_shares_final, "
+                "float_final, tradable_float_final, affiliate_shares, restricted_shares, ads_ratio "
+                "FROM historical_float_final "
+                "WHERE ticker = %s AND document_url <> %s "
+                "AND (form_type IS NULL OR form_type NOT LIKE %s) "
+                "AND (outstanding_shares_final IS NOT NULL OR float_final IS NOT NULL "
+                "     OR tradable_float_final IS NOT NULL) "
+            )
+            params = [ticker, row.get("document_url") or "", "%MANUAL%"]
+            if row.get("date_final"):
+                sql += "AND date_final < %s "
+                params.append(row.get("date_final"))
+            sql += "ORDER BY date_final DESC NULLS LAST, filed_at DESC NULLS LAST LIMIT 8"
+            with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, params)
+                ctx["prior_records"] = cur.fetchall()
         except Exception as e:
-            ctx["historical_float_error"] = str(e)
+            ctx["prior_records_error"] = str(e)
 
         # News (7 most recent, excluding form_type 'grok' and 'jmt415')
         try:
@@ -647,7 +960,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         sections.append("=== ROW UNDER REVIEW ===")
         sections.append(json.dumps(row, default=_json_default, indent=2))
         if ctx.get("filing_text"):
-            sections.append("\n=== SOURCE FILING TEXT (truncated to ~5000 tokens; this is where the OS / float values came from) ===")
+            if ctx.get("filing_text_excerpts"):
+                sections.append(
+                    "\n=== SOURCE FILING — RELEVANT EXCERPTS (auto-extracted from a LONG filing by a "
+                    "pre-processing model; each excerpt is VERBATIM and separated by a line of '-----'. "
+                    "This is NOT the full filing — it is the share-relevant passages pulled from it. "
+                    "These excerpts are where the OS / float values came from.) ==="
+                )
+            elif ctx.get("filing_text_truncated"):
+                sections.append("\n=== SOURCE FILING TEXT (long filing; excerpt-extraction found nothing, so this is the first ~5000 tokens only) ===")
+            else:
+                sections.append("\n=== SOURCE FILING TEXT (full text; this is where the OS / float values came from) ===")
             sections.append(ctx["filing_text"])
         elif ctx.get("filing_text_error"):
             sections.append("\n=== SOURCE FILING TEXT ===")
@@ -664,8 +987,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "    contemporaneous offerings/news, and adjacent historical_float records — not today's screener)."
         )
         sections.append(json.dumps(ctx.get("screener"), default=_json_default, indent=2))
-        sections.append("\n=== 5 MOST RECENT HISTORICAL FLOAT RECORDS (excluding this row) ===")
-        sections.append(json.dumps(ctx.get("historical_float", []), default=_json_default, indent=2))
+        sections.append(
+            "\n=== HISTORICAL FLOAT RECORDS (from Postgres — our authoritative computed _final values + "
+            "restricted_shares; strictly before this row's date_final; MANUAL rows excluded; most recent first) ==="
+        )
+        sections.append(json.dumps(ctx.get("prior_records", []), default=_json_default, indent=2))
         sections.append("\n=== 7 MOST RECENT NEWS / FILINGS (excludes form_type grok, jmt415) ===")
         sections.append(json.dumps(ctx.get("news", []), default=_json_default, indent=2))
         sections.append("\n=== 3 MOST RECENT OFFERINGS ===")
@@ -676,59 +1002,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         sections.append(json.dumps(ctx.get("latest_split"), default=_json_default, indent=2))
         user_content = "\n".join(sections)
 
-        system_prompt = (
-            "You are a data analyst at AskEdgar reviewing a single historical_float_final row. "
-            "Your job: tell the analyst whether the OS / float values look correct, or flag possible reasons they may be wrong.\n\n"
-            "When SOURCE FILING TEXT is provided, it is the most authoritative input -- it is the actual filing text "
-            "the OS / float values were extracted from. Cross-check the row's outstanding_shares against numbers in "
-            "the filing text and call out any mismatch (wrong number picked, share class confused, percent vs absolute, etc.).\n\n"
-            "Things to look for:\n"
-            "- float_final or tradable_float_final < 500k or negative -> often means affiliate_shares or restricted_shares is wrong. "
-            "Check recent offerings + news for share issuances that should have been counted as restricted.\n"
-            "- A big drop in OS or float vs the previous historical record may be normal if a reverse split happened around that date. "
-            "Confirm by checking the most recent reverse split.\n"
-            "- CRITICAL split logic: compare the row's date_final (the 'as of' / reported date) to the split's execution_date. "
-            "If date_final is BEFORE the split execution_date, ALL share counts on this row MUST be pre-split values. "
-            "If any field (affiliate_shares, insider_shares, five_percent_shareholders, outstanding_shares, etc.) appears to be "
-            "post-split while date_final is pre-split, give a clear directive: 'Analyst should multiply [field] by [split_from/split_to] "
-            "to convert back to pre-split values.' Do NOT present this as optional or offer the reverse alternative. "
-            "The rule is absolute: date_final before split -> all values must be pre-split. "
-            "Only if date_final is AFTER the split execution_date should the numbers reflect post-split values.\n"
-            "- For split-affected rows: verify the split actually occurred. Post-split price should usually be > $1, "
-            "and recent news should mention the effective date.\n"
-            "- If outstanding_final is very low, check whether outstanding_shares (raw) and outstanding_shares_reported diverge sharply, "
-            "or whether the AI may have extracted the wrong number from the source filing -- the FILING TEXT will tell you.\n"
-            "- If the ticker is an ADR (is_adr=true), outstanding_shares and float values SHOULD be expressed in ordinary shares, "
-            "NOT ADRs. The ads_ratio field handles the conversion (ads_ratio = ordinary shares per ADR). "
-            "If the numbers look like ADR-level counts (much smaller than expected given the company's market cap and share price), "
-            "flag that the source filing may have reported ADR counts instead of ordinary shares.\n"
-            "- Most important red flags: OS or float < 500k (especially < 100k or negative). "
-            "Negatives are almost always wrong, unless the company is a brand-new SPAC or similar.\n"
-            "- CRITICAL: the SCREENER block is today's current values, not truth for this row. "
-            "Do NOT recommend changes by comparing the row to screener -- the row may legitimately be more "
-            "current than the screener (it can reflect a brand-new issuance from its source filing) OR "
-            "the row may be historical (date_final in the past). For a historical date_final, the question "
-            "is 'were these values correct AS OF date_final', so the screener's current snapshot is largely "
-            "irrelevant. Use the screener only as a rough magnitude sanity check (e.g. an obviously-wrong "
-            "10x discrepancy in either direction); do not flag a discrepancy 'because screener says X'.\n\n"
-            "=== OUTPUT FORMAT (follow exactly) ===\n"
-            "Use this exact structure with plain text (no markdown headers, no bold):\n\n"
-            "TIER: <one of the following>\n"
-            "  CRITICAL - negative float/tradable_float, or float < 200k\n"
-            "  DISCREPANCY - 30%+ change from previous record not explained by a split\n"
-            "  MINOR - small discrepancy under ~20%, or cosmetic issue\n"
-            "  NO CHANGE NECESSARY - values look correct\n\n"
-            "EXPLANATION: 2-4 sentences explaining the issue (or confirming values are fine). Be concise.\n\n"
-            "RECOMMENDED CHANGES:\n"
-            "If changes are needed, list each field that should change as a bullet:\n"
-            "- outstanding_shares / outstanding_shares_reported: <value>\n"
-            "- affiliate_shares: <value>\n"
-            "- restricted_shares: <value>\n"
-            "- float: <value>\n"
-            "(only list fields that need changing)\n"
-            "If no changes are needed, write: No changes recommended.\n\n"
-            "Keep the whole output compact -- this displays inside a small side panel."
-        )
+        # Prompt selection. Precedence: share-issuance > ADR > standard.
+        # A share-issuance row that is also an ADR uses the issuance prompt with an ADR note folded in.
+        is_adr_row = (row.get("is_adr") is True) or (row.get("screener_isadr") is True)
+        details_l = (row.get("details") or "").lower()
+        category_l = (row.get("category") or "").lower()
+        is_issuance = "share issuance" in details_l or "share issuance" in category_l
+        if is_issuance:
+            system_prompt = SHARE_ISSUANCE_BODY + (SHARE_ISSUANCE_ADR_NOTE if is_adr_row else "") + AS_OF_PRINCIPLE + AI_OUTPUT_FORMAT
+        elif is_adr_row:
+            system_prompt = ADR_AI_PROMPT
+        else:
+            system_prompt = STANDARD_AI_PROMPT
 
         payload = {
             "model": ANTHROPIC_MODEL,

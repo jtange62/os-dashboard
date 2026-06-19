@@ -79,14 +79,14 @@ def log(msg):
     print(f"[{ts}] {msg}", flush=True)
 
 
-def main():
-    filed_at = sys.argv[1] if len(sys.argv) > 1 else yesterday_cst()
-    log(f"Starting batch AI analysis for filed_at={filed_at}")
+def process_date(filed_at):
+    """Fetch the daily queue for a single date and analyze any un-analyzed rows."""
+    log(f"Processing filed_at={filed_at}")
 
     data = fetch_queue(filed_at)
     if data.get("status") != "success":
         log(f"Failed to fetch queue: {data}")
-        sys.exit(1)
+        return
 
     rows = data.get("results", [])
     log(f"Found {len(rows)} rows in daily queue")
@@ -118,7 +118,20 @@ def main():
         if not was_cached and i < len(rows) - 1:
             time.sleep(DELAY_BETWEEN)
 
-    log(f"Done. analyzed={analyzed} cached={cached} errors={errors} total={len(rows)}")
+    log(f"Done filed_at={filed_at}. analyzed={analyzed} cached={cached} errors={errors} total={len(rows)}")
+
+
+def main():
+    if len(sys.argv) > 1:
+        # Manual run: process specific date(s) passed as arguments
+        for d in sys.argv[1:]:
+            process_date(d)
+    else:
+        # Cron run: process yesterday and 2 days ago (catches late arrivals)
+        now = datetime.now(CST)
+        for days_back in (1, 2):
+            filed_at = (now - timedelta(days=days_back)).strftime("%Y-%m-%d")
+            process_date(filed_at)
 
 
 if __name__ == "__main__":
