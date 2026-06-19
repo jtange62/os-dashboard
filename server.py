@@ -167,6 +167,12 @@ REVIEW_QUERY = f"""
                      OR hf.float_final IS NOT NULL
                      OR hf.tradable_float_final IS NOT NULL)
             )
+            -- ADR-review path: show ADR-flagged rows (or category ADR_REVIEW) on a major
+            -- exchange, regardless of category / value thresholds.
+            OR (
+                (hf.is_adr = true OR hf.category ILIKE '%%ADR_REVIEW%%')
+                AND s.ticker IS NOT NULL
+            )
             -- Test-value diff path: bypass every other filter when the
             -- secondary extractor disagrees with our finals by >20 percent.
             OR (
