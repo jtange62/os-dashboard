@@ -333,6 +333,23 @@ ADR_AUDIT_GUIDANCE = (
     "the text clearly says it is still current.\n"
     "- If ordinary shares were split/consolidated, verify that outstanding_shares, float, tradable_float, "
     "affiliate_shares, and restricted_shares are on the correct pre/post split basis for date_final.\n\n"
+    "ADS-RATIO-ONLY REVERSE SPLITS:\n"
+    "Some filings describe an ADS ratio change as having 'the same effect as a reverse ADS split' or being on a "
+    "'post-Reverse Stock Split basis,' while also saying ordinary shares are not affected and no ordinary shares will "
+    "be issued or cancelled. In that case, this is NOT an ordinary-share reverse split for historical_float_final.\n"
+    "- If the event is an ADS ratio change / reverse ADS split only, ordinary-share counts should NOT be divided or "
+    "multiplied.\n"
+    "- outstanding_shares, outstanding_shares_reported, float, tradable_float, affiliate_shares, and restricted_shares "
+    "should remain on the ordinary-share basis.\n"
+    "- ads_ratio should change to the new ordinary-shares-per-ADS ratio.\n"
+    "- Do not treat the reverse_splits feed as authoritative over filing text when the filing explicitly says ordinary "
+    "shares were unaffected.\n"
+    "- Example: if ADS ratio changes from 1 ADS = 3 ordinary shares to 1 ADS = 60 ordinary shares and the filing says "
+    "this has the same effect as a 1-for-20 reverse ADS split, then old ads_ratio=3, new ads_ratio=60, ordinary-share "
+    "counts stay roughly the same, and a row showing ordinary-share counts divided by 20 is likely wrong.\n"
+    "- If date_final is on/after the ADS ratio-change effective date and the row has the post-change ads_ratio but "
+    "outstanding_shares/float/tradable are about 1/20 of prior ordinary-share records, flag as DISCREPANCY or CRITICAL "
+    "depending on severity and recommend restoring ordinary-share counts while keeping the new ads_ratio.\n\n"
 )
 
 # Prompt for non-ADR rows.
@@ -460,7 +477,9 @@ SHARE_ISSUANCE_ADR_NOTE = (
     "count. If ADR AUDIT CONTEXT is provided, treat it as evidence, not automatic truth: apply ratio/split/termination "
     "events only when effective on/before date_final, do not apply future events, and if the evidence shows an ADR "
     "facility termination or direct ordinary-share listing effective on/before date_final, do not require an active ADS "
-    "ratio; ads_ratio=1 is the pipeline convention for direct ordinary-share trading.\n\n"
+    "ratio; ads_ratio=1 is the pipeline convention for direct ordinary-share trading. If a filing describes an ADS "
+    "ratio change / reverse ADS split only and says ordinary shares were unaffected, do NOT divide or multiply ordinary "
+    "share counts; keep counts on the ordinary-share basis and update only ads_ratio.\n\n"
 )
 
 
