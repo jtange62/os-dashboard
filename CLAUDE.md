@@ -274,6 +274,7 @@ The `<span class="dl-icons">` wrapper has `onclick="event.stopPropagation()"` so
 - **Git auth on instance**: token embedded in the HTTPS remote URL (already configured). `git pull` works without extra credentials.
 - **Systemd services**: `os-dashboard.service` (port 8765), `offerings-dashboard.service` (port 8766). Both set to `Restart=always`.
 - **Cron job** (ubuntu user): `0 1 * * * /usr/bin/python3 /opt/os-dashboard/pre_analyze.py >> /opt/os-dashboard/pre_analyze.log 2>&1` — runs nightly batch AI analysis at 1 AM CST.
+- **One-off batch scripts on the instance (NOT in git):** `/opt/os-dashboard/adr_analyze.py`, `lowfloat_analyze.py`, `reg_issuance.py` — ad-hoc AI-analysis backfills that query Postgres and POST to `/api/ai-analyze`. They reuse `config.json` and have hardcoded queries/date ranges (e.g. `reg_issuance.py` filters a fixed `filed_at` window), so edit before reuse. Left untracked on purpose; could be consolidated into one parameterized `batch_analyze.py` if they're worth keeping.
 - **config.json**: gitignored — already present on the instance at both `/opt/os-dashboard-repo/config.json` and `/opt/os-dashboard-repo/Offerings Dashboard/config.json`. If credentials change, `scp` the updated file to the instance.
 - **Deploy steps**: push to GitHub, then SSH in and pull + restart:
   ```
