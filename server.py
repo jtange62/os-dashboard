@@ -152,6 +152,9 @@ REVIEW_QUERY = f"""
             -- Share-issuance path: always show if details flags a share issuance,
             -- regardless of exchange / category / value thresholds.
             hf.details ILIKE '%%Share issuance via%%'
+            -- Future-date path: a date_final after today is almost always an error
+            -- (reported "as of" date in the future) -- always surface it.
+            OR hf.date_final > CURRENT_DATE
             -- Test-value diff path: bypass every other filter when the
             -- secondary extractor disagrees with our finals by >20 percent.
             OR (
