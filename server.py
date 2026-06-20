@@ -350,6 +350,21 @@ ADR_AUDIT_GUIDANCE = (
     "- If date_final is on/after the ADS ratio-change effective date and the row has the post-change ads_ratio but "
     "outstanding_shares/float/tradable are about 1/20 of prior ordinary-share records, flag as DISCREPANCY or CRITICAL "
     "depending on severity and recommend restoring ordinary-share counts while keeping the new ads_ratio.\n\n"
+    "ADR_BACKFILL_REPAIR LABELS (look in category / details / notes):\n"
+    "A tag of ADR_BACKFILL_REPAIR means this row is a historical SYNTHETIC ADR split row created during a prior ADR "
+    "backfill. It may have treated a reverse_splits feed row as an ordinary-share split, even though some ADR events "
+    "are only ADS ratio changes / reverse ADS splits. For these rows do NOT assume the reverse_splits feed is "
+    "authoritative -- the FILING TEXT controls. If the filing says ordinary shares were not affected, no ordinary shares "
+    "were issued/cancelled, or only the ADS ratio changed, then OS/float/tradable should NOT have been split. The notes "
+    "field carries the evidence the backfill found -- read it. Sub-labels indicate priority/confidence:\n"
+    "- ADR_ADS_RATIO_ONLY_REVERSE_SPLIT: evidence suggests this was an ADS ratio change ONLY -> ordinary-share counts "
+    "should likely be RESTORED to the prior ordinary basis (i.e. NOT divided) and ads_ratio updated. Strongest "
+    "likely-bad candidate -> if the split was applied to ordinary shares, tier CRITICAL/DISCREPANCY and recommend "
+    "restoring counts.\n"
+    "- ADR_SPLIT_CLASSIFICATION_UNCLEAR: the ADS ratio-change math matches the reverse split, but evidence may not "
+    "conclusively say ordinary shares were unaffected -- review the source text carefully before recommending changes.\n"
+    "- ADR_ORDINARY_SPLIT_RECHECK: no clear ADS-ratio-only evidence was found -- verify from the filing whether this was "
+    "a true ordinary-share split/consolidation or just an ADS reverse split.\n\n"
 )
 
 # Prompt for non-ADR rows.
@@ -479,7 +494,9 @@ SHARE_ISSUANCE_ADR_NOTE = (
     "facility termination or direct ordinary-share listing effective on/before date_final, do not require an active ADS "
     "ratio; ads_ratio=1 is the pipeline convention for direct ordinary-share trading. If a filing describes an ADS "
     "ratio change / reverse ADS split only and says ordinary shares were unaffected, do NOT divide or multiply ordinary "
-    "share counts; keep counts on the ordinary-share basis and update only ads_ratio.\n\n"
+    "share counts; keep counts on the ordinary-share basis and update only ads_ratio. "
+    "If category/details/notes show ADR_BACKFILL_REPAIR, this is a synthetic backfill split row that may have wrongly "
+    "split ordinary shares for an ADS-ratio-only event -- rely on the filing text, not the reverse_splits feed.\n\n"
 )
 
 
@@ -497,7 +514,7 @@ def get_conn():
 
 def _has_adr_review_flag(row):
     text = f"{row.get('category') or ''}\n{row.get('details') or ''}".lower()
-    return "adr_review" in text
+    return "adr_review" in text or "adr_backfill_repair" in text
 
 
 def _needs_adr_packet(row):
