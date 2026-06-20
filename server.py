@@ -271,6 +271,15 @@ REVIEW_ADR_QUERY = f"""
     LIMIT 50
 """
 
+# ADR backfill-repair mode: synthetic ADR split rows from the prior backfill. No other filters.
+REVIEW_BACKFILL_QUERY = f"""
+    SELECT {REVIEW_COLUMNS}
+    FROM historical_float_final hf
+    WHERE hf.category ILIKE '%%ADR_BACKFILL_REPAIR%%'
+    ORDER BY hf.date_final DESC NULLS LAST, hf.filed_at DESC NULLS LAST
+    LIMIT 200
+"""
+
 
 # Shared output format — MUST stay identical across prompts so the UI's TIER parsing works.
 AI_OUTPUT_FORMAT = (
@@ -654,6 +663,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 {
                     "status": "success",
                     "mode": "adr",
+                    "count": len(rows),
+                    "results": rows,
+                },
+            )
+            return
+
+        if mode == "backfill":
+            with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(REVIEW_BACKFILL_QUERY)
+                rows = cur.fetchall()
+            self._send_json(
+                200,
+                {
+                    "status": "success",
+                    "mode": "backfill",
                     "count": len(rows),
                     "results": rows,
                 },

@@ -634,6 +634,7 @@
       <button type="button" class="mode-btn" data-mode="ticker">By ticker</button>
       <button type="button" class="mode-btn" data-mode="lowfloat">Low float</button>
       <button type="button" class="mode-btn" data-mode="adr">ADR</button>
+      <button type="button" class="mode-btn" data-mode="backfill">ADR Backfill</button>
     </div>
 
     <form id="review-form-date" class="meta-row" style="margin-bottom:14px;">
@@ -687,6 +688,12 @@
       <button type="button" class="primary" id="review-adr-refresh">Refresh</button>
       <span style="color:var(--dim);font-size:0.85em;">ADR-flagged rows on a major exchange (limit 50, ordered by filed_at)</span>
       <span id="review-summary-adr" class="status" style="margin-left:auto;"></span>
+    </div>
+
+    <div id="review-form-backfill" class="meta-row" style="margin-bottom:14px;display:none;">
+      <button type="button" class="primary" id="review-backfill-refresh">Refresh</button>
+      <span style="color:var(--dim);font-size:0.85em;">ADR_BACKFILL_REPAIR rows (synthetic ADR split rows, ordered by date_final)</span>
+      <span id="review-summary-backfill" class="status" style="margin-left:auto;"></span>
     </div>
 
     <div id="review-body"></div>
@@ -1674,6 +1681,7 @@ let reviewAllRows = [];             // unfiltered rows for client-side tier filt
 let dirtyByUrl = new Map();        // document_url -> { field: newValue }
 let lowFloatCache = null;          // cached low-float results (persists across tab switches)
 let adrCache = null;               // cached ADR results (persists across tab switches)
+let backfillCache = null;          // cached ADR backfill-repair results (persists across tab switches)
 let staleUrls = new Set();         // pinned rows that didn't match the SQL filter
 
 // Column sorting state (default: tradable_float_final ascending = lowest first)
@@ -1706,6 +1714,7 @@ function setReviewMode(mode, opts = {}) {
   document.getElementById("review-form-ticker").style.display   = mode === "ticker"   ? "" : "none";
   document.getElementById("review-form-lowfloat").style.display = mode === "lowfloat" ? "" : "none";
   document.getElementById("review-form-adr").style.display      = mode === "adr"      ? "" : "none";
+  document.getElementById("review-form-backfill").style.display = mode === "backfill" ? "" : "none";
   // URL state
   const u = new URL(window.location);
   u.searchParams.set("rmode", mode);
@@ -1743,6 +1752,13 @@ document.querySelectorAll(".mode-btn").forEach((b) => {
         loadReview();
       }
     }
+    else if (reviewMode === "backfill") {
+      if (backfillCache) {
+        restoreBackfillCache();
+      } else {
+        loadReview();
+      }
+    }
     else if (document.getElementById("review-ticker").value) loadReview();
   });
 });
@@ -1765,6 +1781,10 @@ document.getElementById("review-lowfloat-refresh").addEventListener("click", () 
 });
 document.getElementById("review-adr-refresh").addEventListener("click", () => {
   adrCache = null;  // clear cache so it re-queries
+  loadReview();
+});
+document.getElementById("review-backfill-refresh").addEventListener("click", () => {
+  backfillCache = null;  // clear cache so it re-queries
   loadReview();
 });
 document.getElementById("review-today").addEventListener("click", () => {
@@ -1798,6 +1818,9 @@ async function loadReview() {
   }
   if (reviewMode === "adr") {
     return loadReviewByAdr();
+  }
+  if (reviewMode === "backfill") {
+    return loadReviewByBackfill();
   }
   return loadReviewByDate();
 }
@@ -1935,6 +1958,36 @@ function restoreAdrCache() {
   staleUrls = new Set();
   summary.innerHTML = `<strong>${adrCache.count}</strong> ADR records (cached)`;
   renderReviewTable(adrCache.results);
+}
+
+async function loadReviewByBackfill() {
+  const summary = document.getElementById("review-summary-backfill");
+  summary.textContent = "";
+  let data;
+  try {
+    data = await fetch("/api/review?mode=backfill").then((r) => r.json());
+    if (data.status !== "success") throw new Error(data?.error?.message || "ADR backfill query failed");
+  } catch (e) {
+    setError("review-body", `Failed to load ADR backfill records: ${e.message}`);
+    return;
+  }
+  reviewRowsByUrl = new Map(data.results.map((r) => [r.document_url, r]));
+  reviewAllRows = data.results;
+  dirtyByUrl = new Map();
+  staleUrls = new Set();
+  backfillCache = { results: data.results, count: data.count };
+  summary.innerHTML = `<strong>${data.count}</strong> ADR backfill-repair records`;
+  renderReviewTable(data.results);
+}
+
+function restoreBackfillCache() {
+  const summary = document.getElementById("review-summary-backfill");
+  reviewRowsByUrl = new Map(backfillCache.results.map((r) => [r.document_url, r]));
+  reviewAllRows = backfillCache.results;
+  dirtyByUrl = new Map();
+  staleUrls = new Set();
+  summary.innerHTML = `<strong>${backfillCache.count}</strong> ADR backfill-repair records (cached)`;
+  renderReviewTable(backfillCache.results);
 }
 
 async function loadReviewByTicker() {
@@ -2821,7 +2874,7 @@ const params = new URLSearchParams(window.location.search);
 const initialTab = params.get("tab");
 // Restore review queue mode/state from URL.
 const rmodeParam = params.get("rmode");
-const initialMode = ["ticker", "lowfloat", "adr"].includes(rmodeParam) ? rmodeParam : "date";
+const initialMode = ["ticker", "lowfloat", "adr", "backfill"].includes(rmodeParam) ? rmodeParam : "date";
 const initialReviewTicker = (params.get("rt") || "").toUpperCase();
 if (initialMode === "ticker") {
   if (initialReviewTicker) {
@@ -2832,6 +2885,8 @@ if (initialMode === "ticker") {
   setReviewMode("lowfloat");
 } else if (initialMode === "adr") {
   setReviewMode("adr");
+} else if (initialMode === "backfill") {
+  setReviewMode("backfill");
 } else {
   setReviewMode("date");
 }
