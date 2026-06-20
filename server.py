@@ -449,7 +449,11 @@ ADR_AI_PROMPT = (
     "3. RECONCILE: outstanding_shares (ordinary) should roughly equal the reported ADSs * ads_ratio. If they don't "
     "reconcile, explain the discrepancy and recommend the corrected value. Also compare this row's share counts to the "
     "recent HISTORICAL FLOAT RECORDS and the current SCREENER -- an order-of-magnitude jump/drop versus recent ordinary-share "
-    "counts often means ADSs were captured instead of ordinary shares (or vice versa).\n\n"
+    "counts often means ADSs were captured instead of ordinary shares (or vice versa).\n"
+    "   IMPORTANT: the SCREENER's outstanding/float for an ADR ticker are in ADSs, NOT ordinary shares. Multiply the "
+    "screener values by ads_ratio to put them on the ordinary-share basis BEFORE comparing to this row. A row whose "
+    "ordinary OS is ~ads_ratio times the screener's outstanding is EXPECTED and CORRECT -- do NOT flag that as a "
+    "discrepancy.\n\n"
     + ADR_AUDIT_GUIDANCE +
     "ALSO CHECK (general):\n"
     "- Negative or very low float/tradable_float (< 200k, especially < 100k or negative) is almost always wrong -- usually "
@@ -514,7 +518,9 @@ SHARE_ISSUANCE_ADR_NOTE = (
     "If category/details/notes show ADR_BACKFILL_REPAIR, this is a synthetic backfill split row that may have wrongly "
     "split ordinary shares for an ADS-ratio-only event -- rely on the filing text, not the reverse_splits feed. "
     "If the row's document_url is an /adr-corporate-actions or reverse_splits URL, SOURCE FILING TEXT may be absent -- "
-    "use ADR AUDIT CONTEXT (source_document_url, supporting_excerpt) as the primary evidence instead of punting.\n\n"
+    "use ADR AUDIT CONTEXT (source_document_url, supporting_excerpt) as the primary evidence instead of punting. "
+    "Note the SCREENER's outstanding/float for an ADR ticker are in ADSs, not ordinary shares -- multiply by ads_ratio "
+    "before comparing to ordinary-share counts.\n\n"
 )
 
 
@@ -1264,6 +1270,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "context for sanity-checking magnitude, but it is NOT authoritative for the row under review:\n"
             "  - The row may be MORE up-to-date than the screener if it reflects a fresh issuance from "
             "    its source filing that hasn't propagated to the screener yet.\n"
+            "  - For an ADR / ADS-listed ticker the screener's outstanding/float are in ADSs, NOT ordinary shares -- "
+            "    multiply by ads_ratio to compare against this table's ordinary-share counts.\n"
             "  - The row may be HISTORICAL (date_final well in the past), in which case the screener's "
             "    current values say nothing about whether the row was correct as of date_final. For a "
             "    historical row, only judge it against what was true on date_final (use the source filing, "
