@@ -299,6 +299,10 @@ AI_OUTPUT_FORMAT = (
     "- float: <value>\n"
     "- ads_ratio: <value>   (for ADR rows missing or with a wrong ratio)\n"
     "(only list fields that need changing)\n"
+    "ALWAYS evaluate affiliate_shares and restricted_shares explicitly: if any change you recommend to "
+    "outstanding_shares / float / tradable_float implies they should change too (e.g. a split mis-applied, an "
+    "ADS-ratio-only event, or a restricted issuance), include corrected values for affiliate_shares and "
+    "restricted_shares in RECOMMENDED CHANGES. If they are correct as-is, do not list them.\n"
     "If no changes are needed, write: No changes recommended.\n\n"
     "Keep the whole output compact -- this displays inside a small side panel."
 )
