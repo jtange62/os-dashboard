@@ -318,6 +318,9 @@ AS_OF_PRINCIPLE = (
 
 ADR_AUDIT_GUIDANCE = (
     "ADR AUDIT CONTEXT:\n"
+    "For SYNTHETIC ADR rows whose document_url is an /adr-corporate-actions or reverse_splits URL (not a SEC filing), "
+    "SOURCE FILING TEXT will likely be ABSENT -- do NOT punt with 'no source filing text provided.' In that case use "
+    "ADR AUDIT CONTEXT below as the PRIMARY source evidence, especially source_document_url and supporting_excerpt.\n"
     "If ADR AUDIT CONTEXT is provided, use it as extracted evidence, not automatic truth. Compare every ADR event "
     "to this row's date_final.\n"
     "- If an ADR ratio change is effective on/before date_final, the row's ads_ratio should generally reflect the "
@@ -496,7 +499,9 @@ SHARE_ISSUANCE_ADR_NOTE = (
     "ratio change / reverse ADS split only and says ordinary shares were unaffected, do NOT divide or multiply ordinary "
     "share counts; keep counts on the ordinary-share basis and update only ads_ratio. "
     "If category/details/notes show ADR_BACKFILL_REPAIR, this is a synthetic backfill split row that may have wrongly "
-    "split ordinary shares for an ADS-ratio-only event -- rely on the filing text, not the reverse_splits feed.\n\n"
+    "split ordinary shares for an ADS-ratio-only event -- rely on the filing text, not the reverse_splits feed. "
+    "If the row's document_url is an /adr-corporate-actions or reverse_splits URL, SOURCE FILING TEXT may be absent -- "
+    "use ADR AUDIT CONTEXT (source_document_url, supporting_excerpt) as the primary evidence instead of punting.\n\n"
 )
 
 
