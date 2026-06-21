@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Warrant Updates</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --surface-2: #eef1f4;
+    --line: #d8dee6;
+    --line-strong: #b8c1cc;
+    --text: #1d2430;
+    --muted: #667085;
+    --accent: #1466b8;
+    --accent-soft: #e8f2ff;
+    --green: #1f7a4d;
+    --green-soft: #e6f4ed;
+    --red: #ba2f2f;
+    --red-soft: #fce8e8;
+    --yellow: #986f00;
+    --yellow-soft: #fff5cf;
+    --purple: #6b4bb8;
+    --purple-soft: #f0ebff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    padding: 12px 18px;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+  .header-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+  }
+  h1 {
+    font-size: 17px;
+    margin: 0;
+    white-space: nowrap;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 10px;
+    margin-left: auto;
+  }
+  label {
+    display: grid;
+    gap: 3px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  input, select, textarea {
+    width: 100%;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    padding: 7px 9px;
+    font: inherit;
+  }
+  input[type="date"] { min-width: 150px; }
+  input.ticker { width: 130px; text-transform: uppercase; }
+  textarea { min-height: 74px; resize: vertical; }
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--accent);
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-soft);
+  }
+  button {
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    padding: 7px 11px;
+    font: inherit;
+    font-weight: 650;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: white;
+  }
+  button.primary:hover { color: white; filter: brightness(0.96); }
+  button.danger {
+    border-color: var(--red);
+    color: var(--red);
+  }
+  button:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+  }
+  main {
+    width: 100%;
+    padding: 14px 18px 40px;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .meta strong { color: var(--text); }
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    overflow: auto;
+    max-height: calc(100vh - 135px);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 1420px;
+  }
+  th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 11px;
+    text-align: left;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 8px 9px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  td {
+    padding: 8px 9px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover td { background: #f8fbff; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ticker-cell strong { font-size: 14px; }
+  .links { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: middle; }
+  .links a {
+    display: inline-grid;
+    place-items: center;
+    min-width: 24px;
+    height: 20px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    text-decoration: none;
+  }
+  .links a:hover { background: var(--accent-soft); }
+  .small { color: var(--muted); font-size: 11px; }
+  .truncate {
+    max-width: 320px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .wrap {
+    max-width: 420px;
+    white-space: normal;
+  }
+  .pill {
+    display: inline-block;
+    padding: 2px 7px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .pill.good { color: var(--green); background: var(--green-soft); border-color: #b9dec9; }
+  .pill.warn { color: var(--yellow); background: var(--yellow-soft); border-color: #e6cf82; }
+  .pill.bad { color: var(--red); background: var(--red-soft); border-color: #f0b9b9; }
+  .pill.info { color: var(--accent); background: var(--accent-soft); border-color: #b7d5f7; }
+  .pill.purple { color: var(--purple); background: var(--purple-soft); border-color: #d2c5f6; }
+  .status, .error {
+    padding: 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+  }
+  .error {
+    color: var(--red);
+    background: var(--red-soft);
+    border-color: #f0b9b9;
+  }
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(29,36,48,.26);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .16s ease;
+    z-index: 30;
+  }
+  .overlay.open { opacity: 1; pointer-events: auto; }
+  aside {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: min(1320px, 98vw);
+    height: 100vh;
+    background: var(--surface);
+    border-left: 1px solid var(--line-strong);
+    transform: translateX(102%);
+    transition: transform .18s ease;
+    z-index: 40;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    box-shadow: -10px 0 28px rgba(29,36,48,.16);
+  }
+  aside.open { transform: translateX(0); }
+  .panel-head {
+    border-bottom: 1px solid var(--line);
+    padding: 12px 14px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    align-items: start;
+  }
+  .panel-title {
+    font-size: 17px;
+    font-weight: 750;
+  }
+  .panel-body {
+    overflow: auto;
+    padding: 14px;
+    display: grid;
+    gap: 14px;
+    align-content: start;
+  }
+  .section {
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .section h2 {
+    margin: 0;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-2);
+    font-size: 12px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .section-content { padding: 10px; }
+  .two-col {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 14px;
+  }
+  .fields {
+    display: grid;
+    grid-template-columns: 190px minmax(0, 1fr);
+    gap: 8px 10px;
+    align-items: start;
+  }
+  .field-label {
+    color: var(--muted);
+    font-size: 12px;
+    padding-top: 7px;
+  }
+  .proposal-list {
+    display: grid;
+    gap: 9px;
+  }
+  .proposal-row {
+    display: grid;
+    grid-template-columns: 150px minmax(0, 1fr);
+    gap: 8px 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .proposal-row:last-child {
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
+  .proposal-field {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .proposal-values {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
+  .proposal {
+    color: var(--accent);
+    font-weight: 750;
+    font-variant-numeric: tabular-nums;
+  }
+  .muted { color: var(--muted); }
+  .mini-table {
+    min-width: 1680px;
+    font-size: 12px;
+  }
+  .mini-scroll {
+    overflow: auto;
+    max-height: 440px;
+    border: 1px solid var(--line);
+  }
+  .mini-input,
+  .mini-select,
+  .mini-textarea {
+    width: 100%;
+    min-width: 88px;
+    padding: 5px 6px;
+    font-size: 12px;
+  }
+  .mini-input.num { text-align: right; }
+  .mini-input.date { min-width: 118px; }
+  .mini-select { min-width: 145px; }
+  .mini-textarea {
+    min-width: 260px;
+    min-height: 42px;
+    resize: vertical;
+  }
+  .mini-table td {
+    vertical-align: middle;
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
+  #toast {
+    position: fixed;
+    left: 18px;
+    bottom: 18px;
+    background: var(--text);
+    color: white;
+    padding: 10px 12px;
+    border-radius: 7px;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: all .16s ease;
+    z-index: 60;
+    max-width: 420px;
+  }
+  #toast.show { opacity: 1; transform: translateY(0); }
+  @media (max-width: 760px) {
+    .header-row { align-items: start; flex-direction: column; }
+    .controls { margin-left: 0; width: 100%; }
+    .two-col { grid-template-columns: 1fr; }
+    .fields, .proposal-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="header-row">
+    <div>
+      <h1>Warrant Updates</h1>
+      <div class="sub">Review proposed updates from warrants_convertibles_adjustments</div>
+    </div>
+    <form class="controls" id="filters">
+      <label>Date
+        <input id="filed-at" type="date" />
+      </label>
+      <label>Ticker
+        <input id="ticker" class="ticker" type="text" autocomplete="off" placeholder="Any" />
+      </label>
+      <label>Status
+        <select id="review-status">
+          <option value="open">Open</option>
+          <option value="all">All</option>
+          <option value="corrected">Corrected</option>
+          <option value="no_change">No Change</option>
+          <option value="added_new">Added New</option>
+          <option value="need_help">Need Help</option>
+        </select>
+      </label>
+      <button class="primary" type="submit">Load</button>
+      <button type="button" id="clear-ticker">Clear Ticker</button>
+    </form>
+  </div>
+</header>
+
+<main>
+  <div class="meta" id="meta">Loading...</div>
+  <div id="status"></div>
+  <div class="table-wrap" id="table-wrap" style="display:none;">
+    <table>
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Filed</th>
+          <th>Type</th>
+          <th>Security</th>
+          <th>Match</th>
+          <th>Change</th>
+          <th>Status</th>
+          <th>Confidence</th>
+          <th>Proposed</th>
+          <th>Summary</th>
+          <th>Filing</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</main>
+
+<div class="overlay" id="overlay"></div>
+<aside id="panel" aria-label="Adjustment details">
+  <div class="panel-head">
+    <div>
+      <div class="panel-title" id="panel-title">Adjustment</div>
+      <div class="small" id="panel-subtitle"></div>
+    </div>
+    <button id="close-panel" type="button">Close</button>
+  </div>
+  <div class="panel-body" id="panel-body"></div>
+</aside>
+<div id="toast"></div>
+
+<script>
+const rowsById = new Map();
+let activeContext = null;
+let activeNewType = "warrant";
+
+const proposalMap = {
+  warrants_amount: "new_warrants_amount",
+  warrants_remaining: "new_warrants_remaining",
+  warrants_exercise_price: "new_warrants_exercise_price",
+  offering_amount: "new_offering_amount",
+  convertible_debt_remaining: "new_convertible_debt_remaining",
+  conversion_price: "new_conversion_price",
+  pp_clause: "new_pp_clause",
+  floor_price: "floor_price",
+};
+
+const labels = {
+  ticker: "Ticker",
+  filed_at: "Filed At",
+  form_type: "Form Type",
+  details: "Security Details",
+  derivative_type: "Derivative Type",
+  pp_clause: "PP Clause",
+  warrants_exercise_price: "Exercise Price",
+  warrants_amount: "Warrants Amount",
+  warrants_remaining: "Warrants Remaining",
+  expiration_date: "Expiration Date",
+  conversion_price: "Conversion Price",
+  offering_amount: "Offering Amount",
+  convertible_debt_remaining: "Convertible Debt Remaining",
+  maturity_date: "Maturity Date",
+};
+
+const newTypeFields = {
+  warrant: ["filed_at", "details", "pp_clause", "warrants_exercise_price", "warrants_amount", "warrants_remaining", "expiration_date"],
+  convertible_debt: ["filed_at", "details", "pp_clause", "conversion_price", "offering_amount", "convertible_debt_remaining", "maturity_date"],
+  convertible_preferred: ["filed_at", "details", "pp_clause", "conversion_price", "offering_amount", "convertible_debt_remaining"],
+};
+
+const matchedFields = [
+  "derivative_type", "filed_at", "details", "pp_clause",
+  "warrants_exercise_price", "warrants_amount", "warrants_remaining", "expiration_date",
+  "conversion_price", "offering_amount", "convertible_debt_remaining", "maturity_date"
+];
+
+const reviewStatuses = {
+  corrected: "Corrected",
+  no_change: "No Change",
+  added_new: "Added New",
+  need_help: "Need Help",
+};
+
+function escapeHtml(v) {
+  return String(v ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+function num(v) {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(String(v).replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+function fmtDate(v) {
+  if (!v) return "-";
+  return String(v).slice(0, 10);
+}
+
+function fmtInt(v) {
+  const n = num(v);
+  return n === null ? "-" : Math.round(n).toLocaleString();
+}
+
+function fmtMoney(v) {
+  const n = num(v);
+  if (n === null) return "-";
+  if (Math.abs(n) >= 1000000) return "$" + (n / 1000000).toFixed(1) + "M";
+  if (Math.abs(n) >= 1000) return "$" + (n / 1000).toFixed(1) + "K";
+  return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+function fmtMcap(v) {
+  const n = num(v);
+  if (n === null) return "";
+  if (Math.abs(n) >= 1e9) return "$" + (n / 1e9).toFixed(2) + "B";
+  if (Math.abs(n) >= 1e6) return "$" + (n / 1e6).toFixed(1) + "M";
+  return fmtMoney(n);
+}
+
+function fmtValue(field, value) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (field.includes("date") || field === "filed_at") return fmtDate(value);
+  if (field.includes("price") || field.includes("amount") || field.includes("remaining") || field === "floor_price") {
+    return field.includes("price") || field === "floor_price" ? fmtMoney(value) : fmtInt(value);
+  }
+  return escapeHtml(value);
+}
+
+function askedgarFilingUrl(row) {
+  if (!row.document_url) return "";
+  return `https://app.askedgar.io/filing?filingUrl=${encodeURIComponent(row.document_url)}&ticker=${encodeURIComponent(row.ticker || "")}`;
+}
+
+function tickerLinks(ticker) {
+  if (!ticker) return "";
+  const t = encodeURIComponent(String(ticker).toUpperCase());
+  return `<span class="links" onclick="event.stopPropagation()">
+    <a href="https://dilutiontracker.com/app/search/${t}?a=ps7ydb" target="_blank" rel="noopener" title="DilutionTracker">DT</a>
+    <a href="https://app.askedgar.io/ticker/${t}/dilution" target="_blank" rel="noopener" title="AskEdgar dilution">AE</a>
+  </span>`;
+}
+
+function matchPill(row) {
+  const count = Number(row.wc3_match_count || 0);
+  if (count === 1) return `<span class="pill good">Matched</span>`;
+  if (count > 1) return `<span class="pill warn">${count} Matches</span>`;
+  return `<span class="pill bad">No Match</span>`;
+}
+
+function confidencePill(value) {
+  const v = String(value || "").toUpperCase();
+  if (v === "HIGH") return `<span class="pill good">HIGH</span>`;
+  if (v === "MEDIUM") return `<span class="pill warn">MEDIUM</span>`;
+  if (v === "LOW") return `<span class="pill bad">LOW</span>`;
+  return `<span class="pill">${escapeHtml(value || "-")}</span>`;
+}
+
+function reviewStatusPill(value) {
+  const v = String(value || "").toLowerCase();
+  if (!v) return `<span class="pill">Open</span>`;
+  if (v === "corrected") return `<span class="pill good">Corrected</span>`;
+  if (v === "no_change") return `<span class="pill info">No Change</span>`;
+  if (v === "added_new") return `<span class="pill purple">Added New</span>`;
+  if (v === "need_help") return `<span class="pill bad">Need Help</span>`;
+  return `<span class="pill">${escapeHtml(value)}</span>`;
+}
+
+function proposedSummary(row) {
+  const fields = [
+    ["warrants_remaining", row.new_warrants_remaining],
+    ["warrants_exercise_price", row.new_warrants_exercise_price],
+    ["convertible_debt_remaining", row.new_convertible_debt_remaining],
+    ["conversion_price", row.new_conversion_price],
+    ["warrants_amount", row.new_warrants_amount],
+    ["offering_amount", row.new_offering_amount],
+    ["pp_clause", row.new_pp_clause && String(row.new_pp_clause).toLowerCase() !== "no change" ? row.new_pp_clause : null],
+  ].filter(([, v]) => v !== null && v !== undefined && v !== "");
+  if (!fields.length) return `<span class="muted">No proposed values</span>`;
+  return fields.map(([field, value]) => `<div><strong>${escapeHtml(labels[field] || field)}:</strong> ${fmtValue(field, value)}</div>`).join("");
+}
+
+function renderTable(rows) {
+  rowsById.clear();
+  const body = document.getElementById("rows");
+  body.innerHTML = rows.map(row => {
+    rowsById.set(Number(row.id), row);
+    const filing = askedgarFilingUrl(row);
+    return `<tr data-id="${row.id}">
+      <td class="ticker-cell">
+        <strong>${escapeHtml(row.ticker || "-")}</strong>${tickerLinks(row.ticker)}
+        <div class="small">${fmtMoney(row.last_sale_price)} ${fmtMcap(row.market_cap_final)}</div>
+      </td>
+      <td>${fmtDate(row.filed_at)}<div class="small">${escapeHtml(row.form_type || "-")}</div></td>
+      <td><span class="pill purple">${escapeHtml(row.type || "-")}</span></td>
+      <td><div class="truncate" title="${escapeHtml(row.details || "")}">${escapeHtml(row.details || "-")}</div></td>
+      <td>${matchPill(row)}</td>
+      <td><span class="pill info">${escapeHtml(row.change || "-")}</span></td>
+      <td>${reviewStatusPill(row.review_status)}</td>
+      <td>${confidencePill(row.confidence_level)}</td>
+      <td class="wrap">${proposedSummary(row)}</td>
+      <td><div class="truncate" title="${escapeHtml(row.summary || "")}">${escapeHtml(row.summary || "-")}</div></td>
+      <td>${filing ? `<a href="${filing}" onclick="event.stopPropagation()" target="_blank" rel="noopener">Open</a>` : "-"}</td>
+    </tr>`;
+  }).join("");
+  body.querySelectorAll("tr").forEach(tr => {
+    tr.addEventListener("click", () => openPanel(Number(tr.dataset.id)));
+  });
+}
+
+async function loadAdjustments() {
+  const date = document.getElementById("filed-at").value;
+  const ticker = document.getElementById("ticker").value.trim().toUpperCase();
+  const reviewStatus = document.getElementById("review-status").value;
+  const params = new URLSearchParams();
+  if (date) params.set("filed_at", date);
+  if (ticker) params.set("ticker", ticker);
+  if (reviewStatus) params.set("review_status", reviewStatus);
+  history.replaceState(null, "", `?${params.toString()}`);
+
+  document.getElementById("table-wrap").style.display = "none";
+  document.getElementById("status").innerHTML = `<div class="status">Loading adjustments...</div>`;
+  try {
+    const res = await fetch(`/api/adjustments?${params.toString()}`);
+    const data = await res.json();
+    if (!res.ok || data.status !== "success") throw new Error(data.error?.message || `HTTP ${res.status}`);
+    if (data.filed_at) document.getElementById("filed-at").value = fmtDate(data.filed_at);
+    if (data.review_status) document.getElementById("review-status").value = data.review_status;
+    renderTable(data.results || []);
+    const scope = data.mode === "date_ticker"
+      ? `for <strong>${escapeHtml(data.ticker)}</strong> on <strong>${fmtDate(data.filed_at)}</strong>`
+      : data.mode === "ticker"
+        ? `for <strong>${escapeHtml(data.ticker)}</strong>`
+        : `for <strong>${fmtDate(data.filed_at)}</strong>`;
+    const statusLabel = document.getElementById("review-status").selectedOptions[0]?.textContent || "Open";
+    document.getElementById("meta").innerHTML =
+      `<strong>${data.count}</strong> actionable adjustment${data.count === 1 ? "" : "s"} ` +
+      `${scope} <span class="small">(${escapeHtml(statusLabel)})</span>`;
+    document.getElementById("status").innerHTML = "";
+    document.getElementById("table-wrap").style.display = "";
+  } catch (err) {
+    document.getElementById("status").innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function openShell(row) {
+  document.getElementById("panel-title").innerHTML = `${escapeHtml(row.ticker || "-")}${tickerLinks(row.ticker)}`;
+  document.getElementById("panel-subtitle").textContent = `${fmtDate(row.filed_at)} | ${row.form_type || "-"} | ${row.type || "-"}`;
+  document.getElementById("panel-body").innerHTML = `<div class="status">Loading context...</div>`;
+  document.getElementById("overlay").classList.add("open");
+  document.getElementById("panel").classList.add("open");
+}
+
+async function openPanel(id) {
+  const row = rowsById.get(Number(id));
+  if (!row) return;
+  openShell(row);
+  try {
+    const res = await fetch(`/api/context?id=${encodeURIComponent(id)}`);
+    const data = await res.json();
+    if (!res.ok || data.status !== "success") throw new Error(data.error?.message || `HTTP ${res.status}`);
+    activeContext = data;
+    activeNewType = deriveType(data.adjustment.type);
+    renderPanel(data);
+  } catch (err) {
+    document.getElementById("panel-body").innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function closePanel() {
+  document.getElementById("overlay").classList.remove("open");
+  document.getElementById("panel").classList.remove("open");
+}
+
+function deriveType(type) {
+  const t = String(type || "").toLowerCase();
+  if (t.includes("preferred")) return "convertible_preferred";
+  if (t.includes("debt") || t.includes("note") || t.includes("debenture")) return "convertible_debt";
+  return "warrant";
+}
+
+function cleanNewDetails(adjustment) {
+  const details = String(adjustment.details || "").trim();
+  if (details.toLowerCase().startsWith("no match - ")) return details.slice(11).trim();
+  if (details && details.toLowerCase() !== "no match") return details;
+  const type = adjustment.type || "Security";
+  return `${fmtDate(adjustment.filed_at).slice(0, 7)} - ${type}`;
+}
+
+function proposalFor(field, adjustment) {
+  if (field === "filed_at") return adjustment.filed_at;
+  if (field === "details") return cleanNewDetails(adjustment);
+  if (field === "pp_clause") {
+    const v = adjustment.new_pp_clause;
+    return v && String(v).toLowerCase() !== "no change" ? v : "";
+  }
+  const src = proposalMap[field];
+  return src ? adjustment[src] : "";
+}
+
+function inputFor(field, value) {
+  const safe = value ?? "";
+  if (field === "pp_clause") {
+    return `<textarea name="${field}">${escapeHtml(safe)}</textarea>`;
+  }
+  if (field === "derivative_type") {
+    const v = deriveType(safe);
+    return `<select name="${field}">
+      <option value="warrant"${v === "warrant" ? " selected" : ""}>warrant</option>
+      <option value="convertible_debt"${v === "convertible_debt" ? " selected" : ""}>convertible_debt</option>
+      <option value="convertible_preferred"${v === "convertible_preferred" ? " selected" : ""}>convertible_preferred</option>
+    </select>`;
+  }
+  if (field.includes("date") || field === "filed_at" || field === "expiration_date" || field === "maturity_date") {
+    return `<input name="${field}" type="date" value="${escapeHtml(fmtDate(safe) === "-" ? "" : fmtDate(safe))}" />`;
+  }
+  if (field.includes("price") || field.includes("amount") || field.includes("remaining")) {
+    return `<input name="${field}" type="number" step="any" value="${escapeHtml(safe)}" />`;
+  }
+  return `<input name="${field}" type="text" value="${escapeHtml(safe)}" />`;
+}
+
+function formFields(fields, source) {
+  return `<div class="fields">${fields.map(field => `
+    <div class="field-label">${escapeHtml(labels[field] || field)}</div>
+    <div>${inputFor(field, source[field])}</div>
+  `).join("")}</div>`;
+}
+
+function collectForm(form) {
+  const data = {};
+  new FormData(form).forEach((value, key) => { data[key] = value; });
+  return data;
+}
+
+function proposalGrid(adjustment, match) {
+  const visible = Object.keys(proposalMap).filter(field => {
+    const v = proposalFor(field, adjustment);
+    return v !== null && v !== undefined && v !== "";
+  });
+  if (!visible.length) return `<div class="muted">No proposed field values were populated for this adjustment.</div>`;
+  return `<div class="proposal-list">
+    ${visible.map(field => `
+      <div class="proposal-row">
+        <div class="proposal-field">${escapeHtml(labels[field] || field)}</div>
+        <div class="proposal-values">
+          <div><span class="muted">Current:</span> ${match ? fmtValue(field, match[field]) : `<span class="muted">New row</span>`}</div>
+          <div class="proposal"><span class="muted">Proposed:</span> ${fmtValue(field, proposalFor(field, adjustment))}</div>
+        </div>
+      </div>
+    `).join("")}
+  </div>`;
+}
+
+function renderPanel(ctx) {
+  const a = ctx.adjustment;
+  const exact = ctx.exact_matches || [];
+  const match = exact.length ? exact[0] : null;
+  document.getElementById("panel-body").innerHTML = `
+    <div class="two-col">
+      <div class="section">
+        <h2>Adjustment</h2>
+        <div class="section-content">
+          <div class="fields">
+            <div class="field-label">Change</div><div><span class="pill info">${escapeHtml(a.change || "-")}</span></div>
+            <div class="field-label">Review Status</div><div>${reviewStatusPill(a.review_status)}</div>
+            <div class="field-label">Confidence</div><div>${confidencePill(a.confidence_level)}</div>
+            <div class="field-label">Match</div><div>${matchPill(a)}</div>
+            <div class="field-label">Security</div><div>${escapeHtml(a.details || "-")}</div>
+            <div class="field-label">Summary</div><div>${escapeHtml(a.summary || "-")}</div>
+            ${a.match_basis ? `<div class="field-label">Match Basis</div><div>${escapeHtml(a.match_basis)}</div>` : ""}
+          </div>
+        </div>
+      </div>
+      <div class="section">
+        <h2>Proposed Values</h2>
+        <div class="section-content">${proposalGrid(a, match)}</div>
+      </div>
+    </div>
+    ${renderReviewEditor(a)}
+    ${renderSecurityEditor(ctx)}
+    <div class="section">
+      <h2>Recent Dilution</h2>
+      <div class="section-content">${renderCandidates(ctx.candidates || [])}</div>
+    </div>
+  `;
+  wirePanelHandlers();
+}
+
+function renderReviewEditor(adjustment) {
+  const status = adjustment.review_status || "";
+  return `<div class="section">
+    <h2>Analyst Review</h2>
+    <div class="section-content">
+      <form id="adjustment-review-form" data-id="${adjustment.id}">
+        <div class="fields">
+          <div class="field-label">Status</div>
+          <div>
+            <select name="review_status">
+              <option value=""${status === "" ? " selected" : ""}>Open</option>
+              <option value="corrected"${status === "corrected" ? " selected" : ""}>Corrected</option>
+              <option value="no_change"${status === "no_change" ? " selected" : ""}>No Change</option>
+              <option value="added_new"${status === "added_new" ? " selected" : ""}>Added New</option>
+              <option value="need_help"${status === "need_help" ? " selected" : ""}>Need Help</option>
+            </select>
+          </div>
+          <div class="field-label">Review Notes</div>
+          <div><textarea name="review_notes" placeholder="What did you change, or what does the next person need to know?">${escapeHtml(adjustment.review_notes || "")}</textarea></div>
+          <div class="field-label">Reviewed At</div>
+          <div>${adjustment.reviewed_at ? escapeHtml(String(adjustment.reviewed_at).replace("T", " ").slice(0, 19)) : `<span class="muted">Not reviewed</span>`}</div>
+        </div>
+        <div class="actions">
+          <button class="primary" type="submit">Save Review Status</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+}
+
+function renderSecurityEditor(ctx) {
+  const a = ctx.adjustment;
+  const exact = ctx.exact_matches || [];
+  if (exact.length === 1) {
+    return renderMatchedEditor(a, exact[0], "");
+  }
+  if (exact.length > 1) {
+    return `<div class="section">
+      <h2>Ambiguous Matched Security</h2>
+      <div class="section-content">
+        <div class="muted" style="margin-bottom:8px;">Choose the wc3 row to edit.</div>
+        <select id="match-picker">
+          ${exact.map(row => `<option value="${row.id}">#${row.id} | ${fmtDate(row.filed_at)} | ${escapeHtml(row.details || "")}</option>`).join("")}
+        </select>
+        <div id="matched-editor-wrap" style="margin-top:10px;">${renderMatchedEditor(a, exact[0], "inner")}</div>
+      </div>
+    </div>`;
+  }
+  return renderNewSecurityEditor(a);
+}
+
+function renderMatchedEditor(adjustment, match, mode) {
+  const source = {};
+  matchedFields.forEach(field => { source[field] = field === "derivative_type" ? (match[field] || deriveType(adjustment.type)) : match[field]; });
+  return `<div class="section ${mode === "inner" ? "" : ""}">
+    ${mode === "inner" ? "" : "<h2>Matched Security Editor</h2>"}
+    <div class="section-content">
+      <div class="small" style="margin-bottom:8px;">Editing warrants_convertibles3 row #${match.id}. Proposed values are shown above for comparison.</div>
+      <form id="matched-form" data-id="${match.id}">
+        ${formFields(matchedFields, source)}
+        <div class="actions">
+          <button class="primary" type="submit">Save Matched Security</button>
+          <a href="${askedgarFilingUrl(adjustment)}" target="_blank" rel="noopener">Open filing</a>
+        </div>
+      </form>
+    </div>
+  </div>`;
+}
+
+function renderNewSecurityEditor(adjustment) {
+  const dtype = activeNewType || deriveType(adjustment.type);
+  const fields = newTypeFields[dtype] || newTypeFields.warrant;
+  const source = {
+    ticker: adjustment.ticker,
+    form_type: adjustment.form_type,
+    document_url: adjustment.document_url,
+    derivative_type: dtype,
+  };
+  fields.forEach(field => { source[field] = proposalFor(field, adjustment); });
+  return `<div class="section">
+    <h2>New Security Candidate</h2>
+    <div class="section-content">
+      <div class="muted" style="margin-bottom:8px;">This will not be added to warrants_convertibles3 until committed. Committed rows are saved with verified=true.</div>
+      <form id="new-form">
+        <div class="fields">
+          <div class="field-label">Derivative Type</div>
+          <div>
+            <select name="derivative_type" id="new-derivative-type">
+              <option value="warrant"${dtype === "warrant" ? " selected" : ""}>warrant</option>
+              <option value="convertible_debt"${dtype === "convertible_debt" ? " selected" : ""}>convertible_debt</option>
+              <option value="convertible_preferred"${dtype === "convertible_preferred" ? " selected" : ""}>convertible_preferred</option>
+            </select>
+          </div>
+          <div class="field-label">Ticker</div><div><input name="ticker" type="text" value="${escapeHtml(source.ticker || "")}" /></div>
+          <div class="field-label">Form Type</div><div><input name="form_type" type="text" value="${escapeHtml(source.form_type || "")}" /></div>
+          <div class="field-label">Document URL</div><div><input name="document_url" type="text" value="${escapeHtml(source.document_url || "")}" /></div>
+        </div>
+        <div style="height:10px"></div>
+        ${formFields(fields, source)}
+        <div class="actions">
+          <button class="primary" type="submit">Commit New Security</button>
+          <a href="${askedgarFilingUrl(adjustment)}" target="_blank" rel="noopener">Open filing</a>
+        </div>
+      </form>
+    </div>
+  </div>`;
+}
+
+function renderCandidates(rows) {
+  if (!rows.length) return `<div class="muted">No recent wc3 rows found for this ticker.</div>`;
+  const field = (row, name, type = "text") => candidateInput(row, name, type);
+  return `<div class="mini-scroll"><table class="mini-table">
+    <thead><tr>
+      <th>ID</th><th>Filed</th><th>Type</th><th>Details</th><th>Wts Amt</th><th>Wts Rem</th><th>Ex Price</th><th>Expiration</th><th>Conv Price</th><th>Offer $</th><th>Debt Rem</th><th>Maturity</th><th>PP Clause</th><th></th>
+    </tr></thead>
+    <tbody>${rows.map(r => `<tr>
+      <td>${r.id}</td>
+      <td>${field(r, "filed_at", "date")}</td>
+      <td>${candidateTypeSelect(r)}</td>
+      <td>${field(r, "details")}</td>
+      <td>${field(r, "warrants_amount", "number")}</td>
+      <td>${field(r, "warrants_remaining", "number")}</td>
+      <td>${field(r, "warrants_exercise_price", "number")}</td>
+      <td>${field(r, "expiration_date", "date")}</td>
+      <td>${field(r, "conversion_price", "number")}</td>
+      <td>${field(r, "offering_amount", "number")}</td>
+      <td>${field(r, "convertible_debt_remaining", "number")}</td>
+      <td>${field(r, "maturity_date", "date")}</td>
+      <td>${candidateTextarea(r, "pp_clause")}</td>
+      <td><button type="button" class="candidate-save" data-wc3-id="${r.id}">Save</button></td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function candidateInput(row, field, type = "text") {
+  const value = type === "date" ? (fmtDate(row[field]) === "-" ? "" : fmtDate(row[field])) : (row[field] ?? "");
+  const cls = type === "number" ? "mini-input num" : type === "date" ? "mini-input date" : "mini-input";
+  const inputType = type === "number" ? "number" : type === "date" ? "date" : "text";
+  const step = type === "number" ? ' step="any"' : "";
+  return `<input class="${cls}" data-wc3-id="${row.id}" data-field="${field}" type="${inputType}"${step} value="${escapeHtml(value)}" />`;
+}
+
+function candidateTextarea(row, field) {
+  return `<textarea class="mini-textarea" data-wc3-id="${row.id}" data-field="${field}">${escapeHtml(row[field] || "")}</textarea>`;
+}
+
+function candidateTypeSelect(row) {
+  const value = row.derivative_type || "";
+  const opts = ["", "warrant", "convertible_debt", "convertible_preferred"];
+  return `<select class="mini-select" data-wc3-id="${row.id}" data-field="derivative_type">
+    ${opts.map(opt => `<option value="${opt}"${String(value) === opt ? " selected" : ""}>${opt || "-"}</option>`).join("")}
+  </select>`;
+}
+
+function wirePanelHandlers() {
+  const reviewForm = document.getElementById("adjustment-review-form");
+  if (reviewForm) {
+    reviewForm.addEventListener("submit", async e => {
+      e.preventDefault();
+      const result = await postJson(
+        "/api/adjustments/update-review",
+        { id: reviewForm.dataset.id, updates: collectForm(reviewForm) },
+        "Review status saved"
+      );
+      if (result && activeContext) {
+        activeContext.adjustment = result;
+        const id = Number(result.id);
+        if (rowsById.has(id)) rowsById.set(id, result);
+        renderPanel(activeContext);
+        loadAdjustments();
+      }
+    });
+  }
+
+  const matched = document.getElementById("matched-form");
+  if (matched) {
+    matched.addEventListener("submit", async e => {
+      e.preventDefault();
+      const id = matched.dataset.id;
+      await postJson("/api/wc3/update", { id, updates: collectForm(matched) }, "Matched security saved");
+      if (activeContext) openPanel(activeContext.adjustment.id);
+    });
+  }
+
+  const newForm = document.getElementById("new-form");
+  if (newForm) {
+    newForm.addEventListener("submit", async e => {
+      e.preventDefault();
+      await postJson("/api/wc3/create", { fields: collectForm(newForm) }, "New security committed to wc3");
+      if (activeContext) openPanel(activeContext.adjustment.id);
+    });
+  }
+
+  const typeSelect = document.getElementById("new-derivative-type");
+  if (typeSelect) {
+    typeSelect.addEventListener("change", () => {
+      activeNewType = typeSelect.value;
+      if (activeContext) renderPanel(activeContext);
+    });
+  }
+
+  const picker = document.getElementById("match-picker");
+  if (picker && activeContext) {
+    picker.addEventListener("change", () => {
+      const selected = activeContext.exact_matches.find(r => String(r.id) === picker.value);
+      document.getElementById("matched-editor-wrap").innerHTML = renderMatchedEditor(activeContext.adjustment, selected, "inner");
+      wirePanelHandlers();
+    });
+  }
+
+  document.querySelectorAll(".candidate-save").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.wc3Id;
+      const updates = {};
+      document.querySelectorAll(`[data-wc3-id="${id}"][data-field]`).forEach(input => {
+        updates[input.dataset.field] = input.value;
+      });
+      const result = await postJson("/api/wc3/update", { id, updates }, "Recent dilution row saved");
+      if (result && activeContext) openPanel(activeContext.adjustment.id);
+    });
+  });
+}
+
+async function postJson(url, body, okMessage) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok || data.status !== "success") {
+    toast(data.error?.message || `HTTP ${res.status}`, true);
+    return null;
+  }
+  toast(okMessage);
+  return data.result;
+}
+
+function toast(message, isError = false) {
+  const el = document.getElementById("toast");
+  el.textContent = message;
+  el.style.background = isError ? "var(--red)" : "var(--text)";
+  el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 2600);
+}
+
+document.getElementById("filters").addEventListener("submit", e => {
+  e.preventDefault();
+  loadAdjustments();
+});
+document.getElementById("clear-ticker").addEventListener("click", () => {
+  document.getElementById("ticker").value = "";
+  loadAdjustments();
+});
+document.getElementById("close-panel").addEventListener("click", closePanel);
+document.getElementById("overlay").addEventListener("click", closePanel);
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") closePanel();
+});
+
+const initial = new URLSearchParams(location.search);
+if (initial.get("ticker")) document.getElementById("ticker").value = initial.get("ticker").toUpperCase();
+if (initial.get("filed_at")) document.getElementById("filed-at").value = initial.get("filed_at");
+if (initial.get("review_status")) document.getElementById("review-status").value = initial.get("review_status");
+loadAdjustments();
+</script>
+</body>
+</html>
