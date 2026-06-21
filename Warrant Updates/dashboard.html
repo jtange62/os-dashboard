@@ -465,6 +465,8 @@ const labels = {
   form_type: "Form Type",
   details: "Security Details",
   derivative_type: "Derivative Type",
+  owners: "Owners",
+  bank: "Bank",
   pp_clause: "PP Clause",
   warrants_exercise_price: "Exercise Price",
   warrants_amount: "Warrants Amount",
@@ -483,7 +485,7 @@ const newTypeFields = {
 };
 
 const matchedFields = [
-  "derivative_type", "filed_at", "details", "pp_clause",
+  "derivative_type", "filed_at", "details", "owners", "bank", "pp_clause",
   "warrants_exercise_price", "warrants_amount", "warrants_remaining", "expiration_date",
   "conversion_price", "offering_amount", "convertible_debt_remaining", "maturity_date"
 ];
@@ -719,7 +721,7 @@ function proposalFor(field, adjustment) {
 
 function inputFor(field, value) {
   const safe = value ?? "";
-  if (field === "pp_clause") {
+  if (field === "pp_clause" || field === "owners" || field === "bank") {
     return `<textarea name="${field}">${escapeHtml(safe)}</textarea>`;
   }
   if (field === "derivative_type") {
