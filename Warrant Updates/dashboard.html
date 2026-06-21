@@ -326,7 +326,6 @@
     border: 1px solid var(--line);
   }
   .mini-input,
-  .mini-select,
   .mini-textarea {
     width: 100%;
     min-width: 88px;
@@ -335,7 +334,10 @@
   }
   .mini-input.num { text-align: right; }
   .mini-input.date { min-width: 118px; }
-  .mini-select { min-width: 145px; }
+  .mini-table .candidate-details,
+  .mini-table .candidate-details .mini-input {
+    min-width: 260px;
+  }
   .mini-textarea {
     min-width: 260px;
     min-height: 42px;
@@ -913,13 +915,12 @@ function renderCandidates(rows) {
   const field = (row, name, type = "text") => candidateInput(row, name, type);
   return `<div class="mini-scroll"><table class="mini-table">
     <thead><tr>
-      <th>ID</th><th>Filed</th><th>Type</th><th>Details</th><th>Wts Amt</th><th>Wts Rem</th><th>Ex Price</th><th>Expiration</th><th>Conv Price</th><th>Offer $</th><th>Debt Rem</th><th>Maturity</th><th>PP Clause</th><th></th>
+      <th>ID</th><th>Filed</th><th>Details</th><th>Wts Amt</th><th>Wts Rem</th><th>Ex Price</th><th>Expiration</th><th>Conv Price</th><th>Offer $</th><th>Debt Rem</th><th>Maturity</th><th>PP Clause</th><th></th>
     </tr></thead>
     <tbody>${rows.map(r => `<tr>
       <td>${r.id}</td>
       <td>${field(r, "filed_at", "date")}</td>
-      <td>${candidateTypeSelect(r)}</td>
-      <td>${field(r, "details")}</td>
+      <td class="candidate-details">${field(r, "details")}</td>
       <td>${field(r, "warrants_amount", "number")}</td>
       <td>${field(r, "warrants_remaining", "number")}</td>
       <td>${field(r, "warrants_exercise_price", "number")}</td>
@@ -944,14 +945,6 @@ function candidateInput(row, field, type = "text") {
 
 function candidateTextarea(row, field) {
   return `<textarea class="mini-textarea" data-wc3-id="${row.id}" data-field="${field}">${escapeHtml(row[field] || "")}</textarea>`;
-}
-
-function candidateTypeSelect(row) {
-  const value = row.derivative_type || "";
-  const opts = ["", "warrant", "convertible_debt", "convertible_preferred"];
-  return `<select class="mini-select" data-wc3-id="${row.id}" data-field="derivative_type">
-    ${opts.map(opt => `<option value="${opt}"${String(value) === opt ? " selected" : ""}>${opt || "-"}</option>`).join("")}
-  </select>`;
 }
 
 function wirePanelHandlers() {
