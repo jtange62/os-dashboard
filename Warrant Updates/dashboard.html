@@ -581,6 +581,10 @@ function reviewStatusPill(value) {
   return `<span class="pill">${escapeHtml(value)}</span>`;
 }
 
+function reviewedAtHtml(value) {
+  return value ? escapeHtml(String(value).replace("T", " ").slice(0, 19)) : `<span class="muted">Not reviewed</span>`;
+}
+
 function proposedSummary(row) {
   const fields = [
     ["warrants_remaining", row.new_warrants_remaining],
@@ -778,7 +782,7 @@ function renderPanel(ctx) {
         <div class="section-content">
           <div class="fields">
             <div class="field-label">Change</div><div><span class="pill info">${escapeHtml(a.change || "-")}</span></div>
-            <div class="field-label">Review Status</div><div>${reviewStatusPill(a.review_status)}</div>
+            <div class="field-label">Review Status</div><div id="panel-review-status">${reviewStatusPill(a.review_status)}</div>
             <div class="field-label">Confidence</div><div>${confidencePill(a.confidence_level)}</div>
             <div class="field-label">Match</div><div>${matchPill(a)}</div>
             <div class="field-label">Security</div><div>${escapeHtml(a.details || "-")}</div>
@@ -822,7 +826,7 @@ function renderReviewEditor(adjustment) {
           <div class="field-label">Review Notes</div>
           <div><textarea name="review_notes" placeholder="What did you change, or what does the next person need to know?">${escapeHtml(adjustment.review_notes || "")}</textarea></div>
           <div class="field-label">Reviewed At</div>
-          <div>${adjustment.reviewed_at ? escapeHtml(String(adjustment.reviewed_at).replace("T", " ").slice(0, 19)) : `<span class="muted">Not reviewed</span>`}</div>
+          <div id="reviewed-at-value">${reviewedAtHtml(adjustment.reviewed_at)}</div>
         </div>
         <div class="actions">
           <button class="primary" type="submit">Save Review Status</button>
@@ -960,9 +964,12 @@ function wirePanelHandlers() {
       if (result && activeContext) {
         activeContext.adjustment = result;
         const id = Number(result.id);
-        if (rowsById.has(id)) rowsById.set(id, result);
-        renderPanel(activeContext);
-        loadAdjustments();
+        if (rowsById.has(id)) {
+          const rows = Array.from(rowsById.values()).map(row => Number(row.id) === id ? result : row);
+          renderTable(rows);
+        }
+        document.getElementById("panel-review-status").innerHTML = reviewStatusPill(result.review_status);
+        document.getElementById("reviewed-at-value").innerHTML = reviewedAtHtml(result.reviewed_at);
       }
     });
   }
