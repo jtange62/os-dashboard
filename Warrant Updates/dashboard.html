@@ -224,7 +224,7 @@
     position: fixed;
     top: 0;
     right: 0;
-    width: min(1320px, 98vw);
+    width: min(1600px, 98vw);
     height: 100vh;
     background: var(--surface);
     border-left: 1px solid var(--line-strong);
@@ -317,7 +317,7 @@
   }
   .muted { color: var(--muted); }
   .mini-table {
-    min-width: 1680px;
+    min-width: 1960px;
     font-size: 12px;
   }
   .mini-scroll {
@@ -467,6 +467,8 @@ const labels = {
   derivative_type: "Derivative Type",
   owners: "Owners",
   bank: "Bank",
+  registered: "Registered",
+  price_protection: "Price Protection",
   pp_clause: "PP Clause",
   warrants_exercise_price: "Exercise Price",
   warrants_amount: "Warrants Amount",
@@ -479,13 +481,13 @@ const labels = {
 };
 
 const newTypeFields = {
-  warrant: ["filed_at", "details", "pp_clause", "warrants_exercise_price", "warrants_amount", "warrants_remaining", "expiration_date"],
-  convertible_debt: ["filed_at", "details", "pp_clause", "conversion_price", "offering_amount", "convertible_debt_remaining", "maturity_date"],
-  convertible_preferred: ["filed_at", "details", "pp_clause", "conversion_price", "offering_amount", "convertible_debt_remaining"],
+  warrant: ["filed_at", "details", "registered", "price_protection", "pp_clause", "warrants_exercise_price", "warrants_amount", "warrants_remaining", "expiration_date"],
+  convertible_debt: ["filed_at", "details", "registered", "price_protection", "pp_clause", "conversion_price", "offering_amount", "convertible_debt_remaining", "maturity_date"],
+  convertible_preferred: ["filed_at", "details", "registered", "price_protection", "pp_clause", "conversion_price", "offering_amount", "convertible_debt_remaining"],
 };
 
 const matchedFields = [
-  "derivative_type", "filed_at", "details", "owners", "bank", "pp_clause",
+  "derivative_type", "filed_at", "details", "owners", "bank", "registered", "price_protection", "pp_clause",
   "warrants_exercise_price", "warrants_amount", "warrants_remaining", "expiration_date",
   "conversion_price", "offering_amount", "convertible_debt_remaining", "maturity_date"
 ];
@@ -735,7 +737,7 @@ function inputFor(field, value) {
   if (field.includes("date") || field === "filed_at" || field === "expiration_date" || field === "maturity_date") {
     return `<input name="${field}" type="date" value="${escapeHtml(fmtDate(safe) === "-" ? "" : fmtDate(safe))}" />`;
   }
-  if (field.includes("price") || field.includes("amount") || field.includes("remaining")) {
+  if (field !== "price_protection" && (field.includes("price") || field.includes("amount") || field.includes("remaining"))) {
     return `<input name="${field}" type="number" step="any" value="${escapeHtml(safe)}" />`;
   }
   return `<input name="${field}" type="text" value="${escapeHtml(safe)}" />`;
@@ -919,14 +921,19 @@ function renderNewSecurityEditor(adjustment) {
 function renderCandidates(rows) {
   if (!rows.length) return `<div class="muted">No recent wc3 rows found for this ticker.</div>`;
   const field = (row, name, type = "text") => candidateInput(row, name, type);
-  return `<div class="mini-scroll"><table class="mini-table">
+  return `<div class="actions" style="margin-top:0;margin-bottom:8px;">
+    <button type="button" class="primary" id="candidate-save-all">Save All Recent Dilution</button>
+  </div>
+  <div class="mini-scroll"><table class="mini-table">
     <thead><tr>
-      <th>ID</th><th>Filed</th><th>Details</th><th>Wts Amt</th><th>Wts Rem</th><th>Ex Price</th><th>Expiration</th><th>Conv Price</th><th>Offer $</th><th>Debt Rem</th><th>Maturity</th><th>PP Clause</th><th></th>
+      <th>ID</th><th>Filed</th><th>Details</th><th>Registered</th><th>Price Protection</th><th>Wts Amt</th><th>Wts Rem</th><th>Ex Price</th><th>Expiration</th><th>Conv Price</th><th>Offer $</th><th>Debt Rem</th><th>Maturity</th><th>PP Clause</th>
     </tr></thead>
     <tbody>${rows.map(r => `<tr>
       <td>${r.id}</td>
       <td>${field(r, "filed_at", "date")}</td>
       <td class="candidate-details">${field(r, "details")}</td>
+      <td>${field(r, "registered")}</td>
+      <td>${field(r, "price_protection")}</td>
       <td>${field(r, "warrants_amount", "number")}</td>
       <td>${field(r, "warrants_remaining", "number")}</td>
       <td>${field(r, "warrants_exercise_price", "number")}</td>
@@ -936,7 +943,6 @@ function renderCandidates(rows) {
       <td>${field(r, "convertible_debt_remaining", "number")}</td>
       <td>${field(r, "maturity_date", "date")}</td>
       <td>${candidateTextarea(r, "pp_clause")}</td>
-      <td><button type="button" class="candidate-save" data-wc3-id="${r.id}">Save</button></td>
     </tr>`).join("")}</tbody>
   </table></div>`;
 }
@@ -1012,17 +1018,34 @@ function wirePanelHandlers() {
     });
   }
 
-  document.querySelectorAll(".candidate-save").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      const id = btn.dataset.wc3Id;
-      const updates = {};
-      document.querySelectorAll(`[data-wc3-id="${id}"][data-field]`).forEach(input => {
-        updates[input.dataset.field] = input.value;
-      });
-      const result = await postJson("/api/wc3/update", { id, updates }, "Recent dilution row saved");
-      if (result && activeContext) openPanel(activeContext.adjustment.id);
-    });
-  });
+  const saveAllCandidates = document.getElementById("candidate-save-all");
+  if (saveAllCandidates) {
+    saveAllCandidates.onclick = async () => {
+      const rowIds = [...new Set([...document.querySelectorAll("[data-wc3-id][data-field]")]
+        .map(input => input.dataset.wc3Id))];
+      let ok = 0;
+      let fail = 0;
+      saveAllCandidates.disabled = true;
+      for (const id of rowIds) {
+        const updates = {};
+        document.querySelectorAll(`[data-wc3-id="${id}"][data-field]`).forEach(input => {
+          updates[input.dataset.field] = input.value;
+        });
+        try {
+          const result = await postJson("/api/wc3/update", { id, updates });
+          if (result) ok += 1;
+          else fail += 1;
+        } catch (err) {
+          fail += 1;
+          toast(`Failed to save recent dilution row #${id}: ${err.message}`, true);
+        }
+      }
+      saveAllCandidates.disabled = false;
+      if (fail) toast(`Saved ${ok}, failed ${fail}`, true);
+      else toast(`Saved ${ok} recent dilution row${ok === 1 ? "" : "s"}`);
+      if (activeContext) openPanel(activeContext.adjustment.id);
+    };
+  }
 }
 
 async function postJson(url, body, okMessage) {
@@ -1036,7 +1059,7 @@ async function postJson(url, body, okMessage) {
     toast(data.error?.message || `HTTP ${res.status}`, true);
     return null;
   }
-  toast(okMessage);
+  if (okMessage) toast(okMessage);
   return data.result;
 }
 

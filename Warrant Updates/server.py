@@ -121,6 +121,8 @@ WC3_EDITABLE_COLUMNS = {
     "verified": "boolean",
     "owners": "text",
     "bank": "text",
+    "registered": "text",
+    "price_protection": "text",
     "pp_clause": "text",
     "warrants_exercise_price": "numeric",
     "warrants_amount": "numeric",
