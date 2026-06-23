@@ -475,6 +475,7 @@ const labels = {
   bank: "Bank",
   registered: "Registered",
   price_protection: "Price Protection",
+  floor_price: "Floor Price",
   pp_clause: "PP Clause",
   warrants_exercise_price: "Exercise Price",
   warrants_amount: "Warrants Amount",
@@ -487,13 +488,13 @@ const labels = {
 };
 
 const newTypeFields = {
-  warrant: ["filed_at", "details", "registered", "price_protection", "pp_clause", "warrants_exercise_price", "warrants_amount", "warrants_remaining", "expiration_date"],
-  convertible_debt: ["filed_at", "details", "registered", "price_protection", "pp_clause", "conversion_price", "offering_amount", "convertible_debt_remaining", "maturity_date"],
-  convertible_preferred: ["filed_at", "details", "registered", "price_protection", "pp_clause", "conversion_price", "offering_amount", "convertible_debt_remaining"],
+  warrant: ["filed_at", "details", "registered", "price_protection", "floor_price", "pp_clause", "warrants_exercise_price", "warrants_amount", "warrants_remaining", "expiration_date"],
+  convertible_debt: ["filed_at", "details", "registered", "price_protection", "floor_price", "pp_clause", "conversion_price", "offering_amount", "convertible_debt_remaining", "maturity_date"],
+  convertible_preferred: ["filed_at", "details", "registered", "price_protection", "floor_price", "pp_clause", "conversion_price", "offering_amount", "convertible_debt_remaining"],
 };
 
 const matchedFields = [
-  "derivative_type", "filed_at", "details", "owners", "bank", "registered", "price_protection", "pp_clause",
+  "derivative_type", "filed_at", "details", "owners", "bank", "registered", "price_protection", "floor_price", "pp_clause",
   "warrants_exercise_price", "warrants_amount", "warrants_remaining", "expiration_date",
   "conversion_price", "offering_amount", "convertible_debt_remaining", "maturity_date"
 ];
@@ -932,7 +933,7 @@ function renderCandidates(rows) {
   </div>
   <div class="mini-scroll"><table class="mini-table">
     <thead><tr>
-      <th>ID</th><th>Filed</th><th>Details</th><th>Registered</th><th>Price Protection</th><th>Wts Amt</th><th>Wts Rem</th><th>Ex Price</th><th>Expiration</th><th>Conv Price</th><th>Offer $</th><th>Debt Rem</th><th>Maturity</th><th>PP Clause</th>
+      <th>ID</th><th>Filed</th><th>Details</th><th>Registered</th><th>Price Protection</th><th>Floor $</th><th>Wts Amt</th><th>Wts Rem</th><th>Ex Price</th><th>Expiration</th><th>Conv Price</th><th>Offer $</th><th>Debt Rem</th><th>Maturity</th><th>PP Clause</th>
     </tr></thead>
     <tbody>${rows.map(r => `<tr>
       <td>${r.id}</td>
@@ -940,6 +941,7 @@ function renderCandidates(rows) {
       <td class="candidate-details">${field(r, "details")}</td>
       <td>${field(r, "registered")}</td>
       <td>${field(r, "price_protection")}</td>
+      <td>${field(r, "floor_price", "number")}</td>
       <td>${field(r, "warrants_amount", "number")}</td>
       <td>${field(r, "warrants_remaining", "number")}</td>
       <td>${field(r, "warrants_exercise_price", "number")}</td>

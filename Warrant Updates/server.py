@@ -124,6 +124,7 @@ WC3_EDITABLE_COLUMNS = {
     "registered": "text",
     "price_protection": "text",
     "pp_clause": "text",
+    "floor_price": "numeric",
     "warrants_exercise_price": "numeric",
     "warrants_amount": "numeric",
     "warrants_remaining": "numeric",
