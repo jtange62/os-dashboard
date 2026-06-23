@@ -249,7 +249,8 @@
     font-weight: 750;
   }
   .panel-body {
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
     padding: 14px;
     display: grid;
     gap: 14px;
@@ -258,6 +259,7 @@
   .section {
     border: 1px solid var(--line);
     background: var(--surface);
+    min-width: 0;
   }
   .section h2 {
     margin: 0;
@@ -268,7 +270,7 @@
     text-transform: uppercase;
     color: var(--muted);
   }
-  .section-content { padding: 10px; }
+  .section-content { padding: 10px; min-width: 0; }
   .two-col {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -279,7 +281,9 @@
     grid-template-columns: 190px minmax(0, 1fr);
     gap: 8px 10px;
     align-items: start;
+    max-width: 1160px;
   }
+  .fields > div { min-width: 0; }
   .field-label {
     color: var(--muted);
     font-size: 12px;
@@ -323,6 +327,8 @@
   .mini-scroll {
     overflow: auto;
     max-height: 440px;
+    max-width: 100%;
+    min-width: 0;
     border: 1px solid var(--line);
   }
   .mini-input,
