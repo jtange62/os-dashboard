@@ -1153,7 +1153,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         # --- Historical data ---
         sections.append("\n=== HISTORICAL DATA: 5 MOST RECENT OFFERINGS ===")
-        sections.append("(Note: the `selling_shareholder_details` field in these entries is a summary of the financing activity, not information about who is selling.)")
+        sections.append("(These entries are already committed to the production financings table — each is the established, canonical record for its financing event; see rule G. Note: the `selling_shareholder_details` field in these entries is a summary of the financing activity, not information about who is selling.)")
         sections.append(json.dumps(ctx.get("recent_offerings", []), default=_json_default, indent=2))
 
         sections.append("\n=== HISTORICAL DATA: 5 MOST RECENT NEWS & FILINGS ===")
@@ -1316,6 +1316,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "- When multiple staging rows exist for the same REGISTERED OFFERING or PRIVATE PLACEMENT event, "
             "the preferred row to keep (mark as NOT DUPLICATE) is the one sourced from a news/press release, "
             "if available. SEC filing-sourced rows are less preferred when a news source covers the same event.\n\n"
+            "## G) ALREADY-COMMITTED OFFERINGS ARE NEVER REPLACED\n"
+            "- The entries under 'HISTORICAL DATA: 5 MOST RECENT OFFERINGS' are already committed to the production "
+            "financings table. Each is the established, canonical ('the') record for its financing event.\n"
+            "- Our process commits an offering ONCE, when it is PRICED. A later filing about the SAME offering — the "
+            "closing, an over-allotment/greenshoe exercise, an amendment, or final numbers — does NOT create a new "
+            "canonical record and does NOT supersede, replace, or retire the already-committed row.\n"
+            "- So when the row being reviewed matches an offering already present in the committed historical entries:\n"
+            "  - Treat the row being reviewed as the duplicate: mark it POTENTIAL DUPLICATE and Done = False. The "
+            "committed historical row stays as-is and remains 'the' offering.\n"
+            "  - NEVER recommend that the committed/historical row be superseded, replaced, marked as a duplicate, or "
+            "removed, and do NOT say the newer closing entry 'should be retained' in its place.\n"
+            "  - If the new filing carries UPDATED figures for that same offering (e.g. an over-allotment exercise raising "
+            "total shares/amount, or final closing numbers), you MAY suggest those as UPDATES to the existing committed "
+            "row's fields — list them under Corrected / Missing Values as updates to the existing entry. This is optional "
+            "analyst guidance, not a replacement.\n"
+            "- This does not change rule (F): source-priority dedup still applies among uncommitted STAGING rows.\n\n"
             "Output in this format:\n\n"
             "Done: True or False (if it should be committed to the main database. "
             "REMINDER: if headline is 'FINANCIAL/SHAREHOLDER RESULTS' alone, Done MUST be False — no exceptions. "
