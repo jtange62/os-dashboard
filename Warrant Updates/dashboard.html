@@ -463,6 +463,7 @@ const proposalMap = {
   conversion_price: "new_conversion_price",
   pp_clause: "new_pp_clause",
   floor_price: "floor_price",
+  registered: "registered",
 };
 
 const labels = {
@@ -604,6 +605,7 @@ function proposedSummary(row) {
     ["conversion_price", row.new_conversion_price],
     ["warrants_amount", row.new_warrants_amount],
     ["offering_amount", row.new_offering_amount],
+    ["registered", row.registered],
     ["pp_clause", row.new_pp_clause && String(row.new_pp_clause).toLowerCase() !== "no change" ? row.new_pp_clause : null],
   ].filter(([, v]) => v !== null && v !== undefined && v !== "");
   if (!fields.length) return `<span class="muted">No proposed values</span>`;
@@ -720,6 +722,7 @@ function cleanNewDetails(adjustment) {
 function proposalFor(field, adjustment) {
   if (field === "filed_at") return adjustment.filed_at;
   if (field === "details") return cleanNewDetails(adjustment);
+  if (field === "registered") return adjustment.registered || "";
   if (field === "pp_clause") {
     const v = adjustment.new_pp_clause;
     return v && String(v).toLowerCase() !== "no change" ? v : "";

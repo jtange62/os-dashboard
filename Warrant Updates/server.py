@@ -58,6 +58,7 @@ ADJUSTMENT_COLUMNS = """
     a.type,
     a.details,
     a.change,
+    a.registered,
     a.new_warrants_amount,
     a.new_warrants_remaining,
     a.new_warrants_exercise_price,
