@@ -113,6 +113,7 @@ REVIEW_COLUMNS = """
     done,
     disclosure_type,
     askedgar_url,
+    document_url,
     offering_amount,
     share_price,
     conversion_price,
@@ -164,6 +165,7 @@ REVIEW_COLUMNS_TICKER = """
     commentary,
     disclosure_type,
     askedgar_url,
+    document_url,
     offering_amount,
     share_price,
     conversion_price,
@@ -1089,7 +1091,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             try:
                 with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
                     cur.execute(
-                        "SELECT id, headline, filed_at, selling_shareholder_details, "
+                        "SELECT id, headline, filed_at, form_type, askedgar_url, document_url, "
+                        "       done, commentary, selling_shareholder_details, "
                         "       shares_amount, share_price, warrants_amount, "
                         "       warrants_exercise_price, conversion_price, "
                         "       offering_amount, bank, potential_owners "
@@ -1134,6 +1137,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         sections.append("- bank: placement agent, sales agent, or underwriter")
         sections.append("- potential_owners: named investors")
         sections.append("- form_type: SEC form type (8-K, S-1, etc.)")
+        sections.append("- askedgar_url: source URL shown in the dashboard; Benzinga URLs are news/press-release sourced")
+        sections.append("- document_url: canonical SEC/news source URL used for duplicate checks")
         sections.append("- period_ending: only used for ATM USED rows — indicates the period when the ATM was actually used, NOT the filing date. ATM usage is often reported late (e.g. in a quarterly filing months later), so period_ending can be much earlier than filed_at. Do NOT flag a mismatch between period_ending and filed_at.")
         sections.append("- filed_at: date the filing was made")
         sections.append("")
@@ -1166,7 +1171,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             sections.append(
                 "(These rows are in the review/staging table and have not yet been committed to the "
                 "production financings table. They cover the ~24h gap before commit. Use them for "
-                "duplicate detection just like historical entries. The `selling_shareholder_details` "
+                "same-event context and analyst dedupe guidance. The `selling_shareholder_details` "
                 "field is a summary of the financing activity, not information about who is selling.)"
             )
             sections.append(json.dumps(staging, default=_json_default, indent=2))
@@ -1181,8 +1186,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "2. The EXTRACTED DATA\n"
             "3. HISTORICAL DATA (recent financings, filings and news)\n"
             "4. STAGING ROWS (if any) — recently processed rows not yet committed to production; "
-            "treat these the same as historical entries for duplicate detection\n\n"
-            "You must verify TWO things:\n\n"
+            "use these as same-event context and analyst dedupe guidance\n\n"
+            "You must verify the current row and decide whether THIS ROW should be committed.\n\n"
+            "## DONE DECISION - CURRENT ROW ONLY\n"
+            "`Done` is the commit recommendation for the row being reviewed, not for the whole ticker/event cluster.\n"
+            "- Done True means THIS ROW meets the criteria to be committed to the production financings table: it is a real financing activity, "
+            "has a proper financing headline, has materially correct key fields, and is not a duplicate of an already-committed production row.\n"
+            "- Done False means THIS ROW should not be committed: it is not a financing row, has a materially wrong headline or critical fields, "
+            "or duplicates an already-committed production row.\n"
+            "- A matching uncommitted STAGING row does not automatically make THIS ROW Done False. If this row is itself a valid row that could be "
+            "committed, output Done True and mention the related staging row IDs so the analyst can choose/dedupe.\n"
+            "- Use Status: NEEDS ATTENTION with Done True when THIS ROW can be committed but related staging rows need analyst dedupe or source-priority review.\n"
+            "- If this row is clearly the weaker staging duplicate (for example, a shell filing with missing terms while another staging row has the "
+            "complete press-release terms), Done False is appropriate. Explain that briefly.\n\n"
             "## A) EXTRACTION ACCURACY\n"
             "Check every extracted field against the original filing text using these rules.\n\n"
             "**IMPORTANT**: Only flag issues that are materially wrong. Do NOT flag:\n"
@@ -1315,7 +1331,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "## F) DUPLICATE SOURCE PRIORITY\n"
             "- When multiple staging rows exist for the same REGISTERED OFFERING or PRIVATE PLACEMENT event, "
             "the preferred row to keep (mark as NOT DUPLICATE) is the one sourced from a news/press release, "
-            "if available. SEC filing-sourced rows are less preferred when a news source covers the same event.\n\n"
+            "if available. SEC filing-sourced rows are less preferred when a news source covers the same event.\n"
+            "- Use source priority as analyst guidance for STAGING rows, not as an automatic reason to set the current row Done False. "
+            "If the current row is the news/press-release row and otherwise looks correct, it should generally be Done True even when "
+            "a same-event SEC staging row also exists. Mention the SEC row ID as a row to dedupe.\n\n"
             "## G) ALREADY-COMMITTED OFFERINGS ARE NEVER REPLACED\n"
             "- The entries under 'HISTORICAL DATA: 5 MOST RECENT OFFERINGS' are already committed to the production "
             "financings table. Each is the established, canonical ('the') record for its financing event.\n"
@@ -1331,11 +1350,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "total shares/amount, or final closing numbers), you MAY suggest those as UPDATES to the existing committed "
             "row's fields — list them under Corrected / Missing Values as updates to the existing entry. This is optional "
             "analyst guidance, not a replacement.\n"
-            "- This does not change rule (F): source-priority dedup still applies among uncommitted STAGING rows.\n\n"
+            "- This does not change rule (F): source-priority guidance still applies among uncommitted STAGING rows.\n\n"
             "Output in this format:\n\n"
             "Done: True or False (if it should be committed to the main database. "
             "REMINDER: if headline is 'FINANCIAL/SHAREHOLDER RESULTS' alone, Done MUST be False — no exceptions. "
             "If headline contains 'ATM TERMINATED', Done should be True.)\n\n"
+            "Done Reason: one short sentence explaining the Done decision for THIS ROW only.\n\n"
             "Status: OK or 'NEEDS ATTENTION'\n\n"
             "Analysis: short description of why its ok or needs attention\n\n"
             "Corrected / Missing Values:\n\n"
