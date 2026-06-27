@@ -17,5 +17,5 @@ if errorlevel 1 (
 )
 
 echo Starting Registration Dashboard...
-start "" http://localhost:8768/
+start "" http://localhost:8769/
 %PY% -u server.py

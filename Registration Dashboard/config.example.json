@@ -7,5 +7,5 @@
     "password": "your-password",
     "sslmode": "require"
   },
-  "registration_dashboard_port": 8768
+  "registration_dashboard_port": 8769
 }

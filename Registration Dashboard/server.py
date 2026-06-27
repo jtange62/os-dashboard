@@ -1,7 +1,7 @@
 """Registration Dashboard - local server with Postgres-backed review queue.
 
 Run:  python server.py
-Then open http://localhost:8768/ in a browser.
+Then open http://localhost:8769/ in a browser.
 
 Configuration is loaded from `config.json` next to this file, or from the
 parent OS Dashboard `config.json` when running from this sibling folder.
@@ -38,7 +38,7 @@ if not CONFIG_PATH.exists():
 with CONFIG_PATH.open(encoding="utf-8") as _f:
     _CFG = json.load(_f)
 
-PORT = int(_CFG.get("registration_dashboard_port", _CFG.get("port_registration", 8768)))
+PORT = int(_CFG.get("registration_dashboard_port", _CFG.get("port_registration", 8769)))
 CHICAGO = zoneinfo.ZoneInfo("America/Chicago")
 
 DB_CONFIG = {
