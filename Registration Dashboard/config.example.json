@@ -1,0 +1,11 @@
+{
+  "postgres": {
+    "host": "your-postgres-host.example.com",
+    "port": 5432,
+    "dbname": "postgres",
+    "user": "your-user",
+    "password": "your-password",
+    "sslmode": "require"
+  },
+  "registration_dashboard_port": 8768
+}

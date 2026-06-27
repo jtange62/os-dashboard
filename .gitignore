@@ -7,6 +7,9 @@ server_out.log
 server_err.log
 *.log
 
+# Local sibling projects that live in their own repos
+Shelf Capacity Dashboard/
+
 # Python
 __pycache__/
 *.py[cod]

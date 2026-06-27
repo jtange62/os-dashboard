@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Registration Dashboard</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --surface-2: #eef1f5;
+    --line: #d7dde5;
+    --line-strong: #b9c3cf;
+    --text: #202938;
+    --muted: #657184;
+    --accent: #1667b7;
+    --accent-soft: #e8f2ff;
+    --green: #22764d;
+    --green-soft: #e6f3ec;
+    --red: #b93030;
+    --red-soft: #fce8e8;
+    --yellow: #8a6500;
+    --yellow-soft: #fff4cc;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+    padding: 12px 18px;
+  }
+  .header-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 17px;
+    white-space: nowrap;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 1px;
+    white-space: nowrap;
+  }
+  .controls {
+    display: flex;
+    align-items: end;
+    gap: 9px;
+    margin-left: auto;
+    flex-wrap: wrap;
+  }
+  label {
+    display: grid;
+    gap: 3px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  input, select, textarea {
+    width: 100%;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    padding: 7px 9px;
+    font: inherit;
+  }
+  input[type="date"] { min-width: 150px; }
+  textarea {
+    min-height: 70px;
+    resize: vertical;
+  }
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--accent);
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-soft);
+  }
+  button {
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    padding: 7px 11px;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: white;
+  }
+  button.primary:hover { color: white; filter: brightness(.96); }
+  button:disabled {
+    opacity: .48;
+    cursor: not-allowed;
+  }
+  main {
+    width: 100%;
+    padding: 14px 18px 42px;
+  }
+  .meta {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .meta strong { color: var(--text); }
+  .status, .error {
+    padding: 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+  }
+  .error {
+    color: var(--red);
+    background: var(--red-soft);
+    border-color: #efb6b6;
+  }
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    overflow: auto;
+    max-height: calc(100vh - 132px);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .queue-table { min-width: 1980px; }
+  th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 11px;
+    text-align: left;
+    font-weight: 750;
+    text-transform: uppercase;
+    padding: 8px 9px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  td {
+    padding: 8px 9px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover td { background: #f8fbff; }
+  tbody tr.active td { background: var(--accent-soft); }
+  td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .ticker-cell {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--surface);
+    border-right: 1px solid var(--line);
+    min-width: 110px;
+  }
+  tbody tr:hover .ticker-cell { background: #f8fbff; }
+  tbody tr.active .ticker-cell {
+    background: #dcecff;
+    border-left: 3px solid var(--accent);
+  }
+  .ticker-cell strong { font-size: 14px; }
+  .truncate {
+    max-width: 360px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .wrap {
+    max-width: 430px;
+    white-space: normal;
+  }
+  .small { color: var(--muted); font-size: 11px; }
+  .muted { color: var(--muted); }
+  a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  a:hover { text-decoration: underline; }
+  .links {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .links a {
+    display: inline-grid;
+    place-items: center;
+    min-width: 24px;
+    height: 20px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 800;
+    text-decoration: none;
+  }
+  .links a:hover { background: var(--accent-soft); }
+  .pill {
+    display: inline-block;
+    padding: 2px 7px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    font-size: 11px;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+  .pill.good { color: var(--green); background: var(--green-soft); border-color: #b8ddc8; }
+  .pill.bad { color: var(--red); background: var(--red-soft); border-color: #efb6b6; }
+  .pill.warn { color: var(--yellow); background: var(--yellow-soft); border-color: #e1c775; }
+  .pill.info { color: var(--accent); background: var(--accent-soft); border-color: #b7d5f7; }
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(32, 41, 56, .28);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .16s ease;
+    z-index: 30;
+  }
+  .overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  aside {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: min(1180px, 84vw);
+    height: 100vh;
+    background: var(--surface);
+    border-left: 1px solid var(--line-strong);
+    transform: translateX(102%);
+    transition: transform .18s ease;
+    z-index: 40;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    box-shadow: -10px 0 28px rgba(32,41,56,.16);
+  }
+  aside.open { transform: translateX(0); }
+  .panel-head {
+    border-bottom: 1px solid var(--line);
+    padding: 12px 14px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: start;
+  }
+  .panel-title {
+    font-size: 18px;
+    font-weight: 800;
+  }
+  .panel-actions {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .position {
+    color: var(--muted);
+    font-size: 12px;
+    min-width: 58px;
+    text-align: center;
+  }
+  .panel-body {
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 14px;
+    display: grid;
+    gap: 14px;
+    align-content: start;
+  }
+  .section {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    min-width: 0;
+  }
+  .section-head {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-2);
+    padding: 8px 10px;
+  }
+  .section h2 {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+  }
+  .section-content {
+    padding: 10px;
+    min-width: 0;
+  }
+  .fields {
+    display: grid;
+    grid-template-columns: 180px minmax(0, 1fr);
+    gap: 8px 10px;
+    align-items: start;
+  }
+  .field-label {
+    color: var(--muted);
+    font-size: 12px;
+    padding-top: 7px;
+  }
+  .field-value {
+    min-width: 0;
+    word-break: break-word;
+    padding-top: 7px;
+  }
+  .edit {
+    width: 100%;
+    min-width: 90px;
+  }
+  .edit.num { text-align: right; }
+  .edit.dirty {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .queue-table .edit {
+    min-width: 130px;
+    padding: 5px 6px;
+    font-size: 12px;
+  }
+  .queue-table textarea.edit {
+    min-width: 230px;
+    min-height: 38px;
+    max-height: 76px;
+    resize: vertical;
+  }
+  .queue-table select.edit {
+    min-width: 96px;
+  }
+  .sort-head {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    font: inherit;
+    font-weight: inherit;
+    text-transform: inherit;
+    cursor: pointer;
+  }
+  .sort-head:hover {
+    color: var(--accent);
+  }
+  .sort-indicator {
+    color: var(--accent);
+    min-width: 10px;
+  }
+  .mini-scroll {
+    overflow: auto;
+    max-width: 100%;
+    max-height: 460px;
+    border: 1px solid var(--line);
+  }
+  .mini-table {
+    min-width: 1250px;
+    font-size: 12px;
+  }
+  .mini-table td { vertical-align: middle; }
+  .mini-input {
+    width: 100%;
+    min-width: 96px;
+    padding: 5px 6px;
+    font-size: 12px;
+  }
+  .mini-input.num { text-align: right; }
+  .mini-textarea {
+    width: 100%;
+    min-width: 230px;
+    min-height: 42px;
+    padding: 5px 6px;
+    font-size: 12px;
+  }
+  #toast {
+    position: fixed;
+    left: 18px;
+    bottom: 18px;
+    background: var(--text);
+    color: white;
+    padding: 10px 12px;
+    border-radius: 7px;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: all .16s ease;
+    z-index: 60;
+    max-width: 440px;
+  }
+  #toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  @media (max-width: 760px) {
+    .header-row { align-items: start; flex-direction: column; }
+    .controls { margin-left: 0; width: 100%; }
+    .fields { grid-template-columns: 1fr; }
+    .panel-head { grid-template-columns: 1fr; }
+    .panel-actions { justify-content: flex-start; }
+    aside { width: 98vw; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="header-row">
+    <div>
+      <h1>Registration Dashboard</h1>
+      <div class="sub">Daily registration filings from offering_data_main</div>
+    </div>
+    <form class="controls" id="filters">
+      <label>Filed at
+        <input id="filed-at" type="date" />
+      </label>
+      <button class="primary" type="submit">Load</button>
+      <button type="button" id="today-btn">Today</button>
+      <button type="button" id="yesterday-btn">Yesterday</button>
+      <button type="button" class="primary" id="save-queue" data-save-section="queue" disabled>Save Table Changes</button>
+    </form>
+  </div>
+</header>
+
+<main>
+  <div class="meta" id="meta">Loading...</div>
+  <div id="status"></div>
+  <div class="table-wrap" id="table-wrap" style="display:none;">
+    <table class="queue-table">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Filed</th>
+          <th><button type="button" class="sort-head" id="sort-form-type">Form <span class="sort-indicator" id="form-sort-indicator"></span></button></th>
+          <th>Effective</th>
+          <th>Headline</th>
+          <th>Offering Type</th>
+          <th>13F Filers</th>
+          <th>Potential Owners</th>
+          <th>Selling Shareholder Details</th>
+          <th class="num">ATM Remaining</th>
+          <th class="num">Offering Amount</th>
+          <th>File No</th>
+          <th>Bank</th>
+          <th>ATM</th>
+          <th>Primary</th>
+          <th>Filing</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</main>
+
+<div class="overlay" id="overlay"></div>
+<aside id="panel" aria-label="Registration filing details">
+  <div class="panel-head">
+    <div>
+      <div class="panel-title" id="panel-title">Registration</div>
+      <div class="small" id="panel-subtitle"></div>
+    </div>
+    <div class="panel-actions">
+      <button type="button" id="prev-row">Prev</button>
+      <span class="position" id="panel-position"></span>
+      <button type="button" id="next-row">Next</button>
+      <button type="button" id="close-panel">Close</button>
+    </div>
+  </div>
+  <div class="panel-body" id="panel-body"></div>
+</aside>
+<div id="toast"></div>
+
+<script>
+let queueRows = [];
+let activeIndex = -1;
+let activeContext = null;
+let sortField = "";
+let sortDir = "asc";
+
+const mainFields = [
+  { field: "ticker", label: "Ticker", readonly: true },
+  { field: "form_type", label: "Form Type", readonly: true },
+  { field: "filed_at", label: "Filed At", readonly: true, type: "date" },
+  { field: "askedgar_url", label: "AskEdgar URL", readonly: true, link: true },
+  { field: "headline", label: "Headline", type: "textarea" },
+  { field: "offering_type", label: "Offering Type" },
+  { field: "13f_filers", label: "13F Filers", type: "textarea" },
+  { field: "potential_owners", label: "Potential Owners", type: "textarea" },
+  { field: "selling_shareholder_details", label: "Selling Shareholder Details", type: "textarea" },
+  { field: "amount_remaining_atm", label: "Amount Remaining ATM", type: "number" },
+  { field: "offering_amount", label: "Offering Amount", type: "number" },
+  { field: "file_no", label: "File No" },
+  { field: "bank", label: "Bank" },
+  { field: "is_atm", label: "Is ATM", type: "boolean" },
+  { field: "effective_status", label: "Effective Status", type: "boolean" },
+  { field: "primary_filing", label: "Primary Filing", type: "boolean" },
+];
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[c]));
+}
+
+function dateValue(date) {
+  const d = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return d.toISOString().slice(0, 10);
+}
+
+function yesterdayValue() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return dateValue(d);
+}
+
+function todayValue() {
+  return dateValue(new Date());
+}
+
+function num(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(String(value).replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+function fmtDate(value) {
+  return value ? String(value).slice(0, 10) : "-";
+}
+
+function fmtNumber(value) {
+  const n = num(value);
+  return n === null ? "-" : n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+function fmtMoney(value) {
+  const n = num(value);
+  if (n === null) return "-";
+  if (Math.abs(n) >= 1000000000) return "$" + (n / 1000000000).toFixed(2) + "B";
+  if (Math.abs(n) >= 1000000) return "$" + (n / 1000000).toFixed(1) + "M";
+  if (Math.abs(n) >= 1000) return "$" + (n / 1000).toFixed(1) + "K";
+  return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+function boolPill(value) {
+  if (value === true) return '<span class="pill good">True</span>';
+  if (value === false) return '<span class="pill bad">False</span>';
+  return '<span class="pill">Blank</span>';
+}
+
+function tickerLinks(ticker) {
+  if (!ticker) return "";
+  const t = encodeURIComponent(String(ticker).toUpperCase());
+  return `<span class="links" onclick="event.stopPropagation()">
+    <a href="https://dilutiontracker.com/app/search/${t}?a=ps7ydb" target="_blank" rel="noopener" title="DilutionTracker">DT</a>
+    <a href="https://app.askedgar.io/ticker/${t}/dilution" target="_blank" rel="noopener" title="AskEdgar dilution">AE</a>
+  </span>`;
+}
+
+function sortedRows(rows) {
+  if (sortField !== "form_type") return rows;
+  const dir = sortDir === "desc" ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const formA = String(a.form_type || "");
+    const formB = String(b.form_type || "");
+    const formCompare = formA.localeCompare(formB, undefined, { sensitivity: "base" });
+    if (formCompare) return formCompare * dir;
+    const tickerCompare = String(a.ticker || "").localeCompare(String(b.ticker || ""), undefined, { sensitivity: "base" });
+    if (tickerCompare) return tickerCompare;
+    return String(a.document_url || "").localeCompare(String(b.document_url || ""));
+  });
+}
+
+function applySort() {
+  if (!sortField) return;
+  const activeDoc = activeIndex >= 0 ? queueRows[activeIndex]?.document_url : "";
+  queueRows = sortedRows(queueRows);
+  if (activeDoc) activeIndex = queueRows.findIndex(row => row.document_url === activeDoc);
+  updateSortIndicator();
+}
+
+function updateSortIndicator() {
+  const indicator = document.getElementById("form-sort-indicator");
+  if (!indicator) return;
+  indicator.textContent = sortField === "form_type" ? (sortDir === "asc" ? "^" : "v") : "";
+}
+
+function queueHasDirty() {
+  return !!document.querySelector('[data-section="queue"].dirty');
+}
+
+function confirmDiscardTableIfNeeded() {
+  return !queueHasDirty() || confirm("Discard unsaved table changes?");
+}
+
+function renderTable(rows) {
+  updateSortIndicator();
+  const body = document.getElementById("rows");
+  body.innerHTML = rows.map((row, index) => `
+    <tr data-index="${index}" class="${index === activeIndex ? "active" : ""}">
+      <td class="ticker-cell">
+        <strong>${escapeHtml(row.ticker || "-")}</strong>${tickerLinks(row.ticker)}
+      </td>
+      <td>${fmtDate(row.filed_at)}</td>
+      <td><span class="pill info">${escapeHtml(row.form_type || "-")}</span></td>
+      <td>${editInput("queue", row.document_url || "", "effective_status", row.effective_status, "boolean")}</td>
+      <td><div class="truncate" title="${escapeHtml(row.headline || "")}">${escapeHtml(row.headline || "-")}</div></td>
+      <td>${editInput("queue", row.document_url || "", "offering_type", row.offering_type, "text")}</td>
+      <td>${editInput("queue", row.document_url || "", "13f_filers", row["13f_filers"], "textarea")}</td>
+      <td><div class="wrap">${escapeHtml(row.potential_owners || "-")}</div></td>
+      <td><div class="wrap">${escapeHtml(row.selling_shareholder_details || "-")}</div></td>
+      <td class="num">${fmtMoney(row.amount_remaining_atm)}</td>
+      <td class="num">${fmtMoney(row.offering_amount)}</td>
+      <td>${escapeHtml(row.file_no || "-")}</td>
+      <td>${escapeHtml(row.bank || "-")}</td>
+      <td>${boolPill(row.is_atm)}</td>
+      <td>${boolPill(row.primary_filing)}</td>
+      <td>${row.askedgar_url ? `<a href="${escapeHtml(row.askedgar_url)}" onclick="event.stopPropagation()" target="_blank" rel="noopener">Open</a>` : "-"}</td>
+    </tr>
+  `).join("");
+  body.querySelectorAll("tr").forEach(row => {
+    row.addEventListener("click", event => {
+      if (event.target.closest("input, textarea, select, button, a")) return;
+      openPanel(Number(row.dataset.index));
+    });
+  });
+  updateSaveButton("queue");
+}
+
+async function loadQueue() {
+  if (!confirmDiscardTableIfNeeded()) return;
+  const filedAt = document.getElementById("filed-at").value;
+  const params = new URLSearchParams();
+  if (filedAt) params.set("filed_at", filedAt);
+  history.replaceState(null, "", `?${params.toString()}`);
+  document.getElementById("status").innerHTML = '<div class="status">Loading...</div>';
+  document.getElementById("table-wrap").style.display = "none";
+  try {
+    const res = await fetch(`/api/review?${params.toString()}`);
+    const data = await res.json();
+    if (!res.ok || data.status !== "success") throw new Error(data.error?.message || `HTTP ${res.status}`);
+    queueRows = data.results || [];
+    applySort();
+    activeIndex = -1;
+    activeContext = null;
+    renderTable(queueRows);
+    document.getElementById("meta").innerHTML =
+      `<strong>${data.count}</strong> registration filing${data.count === 1 ? "" : "s"} for <strong>${fmtDate(data.filed_at)}</strong>`;
+    document.getElementById("status").innerHTML = "";
+    document.getElementById("table-wrap").style.display = "";
+    closePanel(true);
+  } catch (err) {
+    document.getElementById("status").innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function panelIsOpen() {
+  return document.getElementById("panel").classList.contains("open");
+}
+
+function panelHasDirty() {
+  return !!document.querySelector("#panel-body .dirty");
+}
+
+function confirmDiscardIfNeeded() {
+  return !panelHasDirty() || confirm("Discard unsaved changes in this panel?");
+}
+
+async function openPanel(index, force = false) {
+  if (index < 0 || index >= queueRows.length) return;
+  if (!force && queueHasDirty() && !confirmDiscardTableIfNeeded()) return;
+  if (!force && panelIsOpen() && !confirmDiscardIfNeeded()) return;
+  activeIndex = index;
+  renderTable(queueRows);
+  const row = queueRows[index];
+  document.getElementById("overlay").classList.add("open");
+  document.getElementById("panel").classList.add("open");
+  document.getElementById("panel-title").innerHTML = `${escapeHtml(row.ticker || "-")}${tickerLinks(row.ticker)}`;
+  document.getElementById("panel-subtitle").textContent = `${fmtDate(row.filed_at)} | ${row.form_type || "-"} | ${row.headline || ""}`;
+  document.getElementById("panel-position").textContent = `${index + 1} / ${queueRows.length}`;
+  document.getElementById("prev-row").disabled = index <= 0;
+  document.getElementById("next-row").disabled = index >= queueRows.length - 1;
+  document.getElementById("panel-body").innerHTML = '<div class="status">Loading details...</div>';
+  try {
+    const params = new URLSearchParams({ document_url: row.document_url || "" });
+    const res = await fetch(`/api/context?${params.toString()}`);
+    const data = await res.json();
+    if (!res.ok || data.status !== "success") throw new Error(data.error?.message || `HTTP ${res.status}`);
+    activeContext = data.result;
+    queueRows[index] = activeContext.main;
+    renderTable(queueRows);
+    renderPanel(activeContext);
+  } catch (err) {
+    document.getElementById("panel-body").innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function closePanel(force = false) {
+  if (!force && panelIsOpen() && !confirmDiscardIfNeeded()) return;
+  document.getElementById("overlay").classList.remove("open");
+  document.getElementById("panel").classList.remove("open");
+}
+
+function renderPanel(ctx) {
+  const main = ctx.main;
+  document.getElementById("panel-title").innerHTML = `${escapeHtml(main.ticker || "-")}${tickerLinks(main.ticker)}`;
+  document.getElementById("panel-subtitle").textContent = `${fmtDate(main.filed_at)} | ${main.form_type || "-"} | ${main.headline || ""}`;
+  syncPanelNavigationState();
+  document.getElementById("panel-body").innerHTML = `
+    ${renderMainSection(main)}
+    ${renderDilutionSection(ctx.dilution || [])}
+    ${renderOfferingsSection(ctx.offerings || [])}
+  `;
+}
+
+function syncPanelNavigationState() {
+  document.getElementById("panel-position").textContent =
+    activeIndex >= 0 ? `${activeIndex + 1} / ${queueRows.length}` : "";
+  document.getElementById("prev-row").disabled = activeIndex <= 0;
+  document.getElementById("next-row").disabled = activeIndex < 0 || activeIndex >= queueRows.length - 1;
+}
+
+function renderMainSection(row) {
+  return `<div class="section">
+    <div class="section-head">
+      <h2>Offering Data Main Details</h2>
+      <button type="button" class="primary" id="save-main" data-save-section="main" disabled>Save Details</button>
+    </div>
+    <div class="section-content">
+      <div class="fields">
+        ${mainFields.map(config => `
+          <div class="field-label">${escapeHtml(config.label)}</div>
+          <div>${config.readonly ? readonlyValue(row, config) : editInput("main", "", config.field, row[config.field], config.type || "text")}</div>
+        `).join("")}
+      </div>
+    </div>
+  </div>`;
+}
+
+function readonlyValue(row, config) {
+  const value = row[config.field];
+  if (config.link) {
+    return `<div class="field-value">${value ? `<a href="${escapeHtml(value)}" target="_blank" rel="noopener">Open AskEdgar</a>` : "-"}</div>`;
+  }
+  if (config.type === "date") return `<div class="field-value">${fmtDate(value)}</div>`;
+  return `<div class="field-value">${escapeHtml(value || "-")}</div>`;
+}
+
+function editInput(section, id, field, value, type) {
+  const original = normalizeValue(value, type);
+  const idAttr = id === "" ? "" : ` data-id="${escapeHtml(id)}"`;
+  const attrs = `data-section="${section}"${idAttr} data-field="${escapeHtml(field)}" data-original="${escapeHtml(original)}"`;
+  if (type === "textarea") {
+    return `<textarea class="edit" ${attrs}>${escapeHtml(original)}</textarea>`;
+  }
+  if (type === "boolean") {
+    return `<select class="edit" ${attrs}>
+      <option value=""${original === "" ? " selected" : ""}>Blank</option>
+      <option value="true"${original === "true" ? " selected" : ""}>True</option>
+      <option value="false"${original === "false" ? " selected" : ""}>False</option>
+    </select>`;
+  }
+  if (type === "number") {
+    return `<input class="edit num" type="number" step="any" value="${escapeHtml(original)}" ${attrs} />`;
+  }
+  return `<input class="edit" type="text" value="${escapeHtml(original)}" ${attrs} />`;
+}
+
+function normalizeValue(value, type) {
+  if (value === null || value === undefined) return "";
+  if (type === "boolean") {
+    if (value === true) return "true";
+    if (value === false) return "false";
+    return "";
+  }
+  if (type === "date") return fmtDate(value) === "-" ? "" : fmtDate(value);
+  return String(value);
+}
+
+function renderDilutionSection(rows) {
+  const body = rows.length ? `
+    <div class="mini-scroll">
+      <table class="mini-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Filed</th>
+            <th>Title</th>
+            <th>Registered</th>
+            <th>Owners</th>
+            <th>File No</th>
+            <th class="num">Exercise Price</th>
+            <th class="num">Warrants</th>
+            <th class="num">Offering Amount</th>
+            <th class="num">Conversion Price</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(row => `
+            <tr>
+              <td>${row.id}</td>
+              <td>${fmtDate(row.filed_at)}</td>
+              <td><div class="wrap">${escapeHtml(row.details || "-")}</div></td>
+              <td>${miniInput("dilution", row.id, "registered", row.registered)}</td>
+              <td>${miniTextarea("dilution", row.id, "owners", row.owners)}</td>
+              <td>${miniInput("dilution", row.id, "file_no", row.file_no)}</td>
+              <td class="num">${fmtMoney(row.warrants_exercise_price)}</td>
+              <td class="num">${fmtNumber(row.warrants_amount)}</td>
+              <td class="num">${fmtMoney(row.offering_amount)}</td>
+              <td class="num">${fmtMoney(row.conversion_price)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>` : '<div class="muted">No verified historical dilution rows found for this ticker.</div>';
+  return `<div class="section">
+    <div class="section-head">
+      <h2>Historical Dilution</h2>
+      <button type="button" class="primary" data-save-section="dilution" disabled>Save Historical Dilution</button>
+    </div>
+    <div class="section-content">${body}</div>
+  </div>`;
+}
+
+function renderOfferingsSection(rows) {
+  const body = rows.length ? `
+    <div class="mini-scroll">
+      <table class="mini-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Filed</th>
+            <th>Headline</th>
+            <th class="num">Offering Amount</th>
+            <th class="num">Share Price</th>
+            <th>Owners</th>
+            <th>Filing</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(row => `
+            <tr>
+              <td>${row.id}</td>
+              <td>${fmtDate(row.filed_at)}</td>
+              <td><div class="wrap">${escapeHtml(row.headline || "-")}</div></td>
+              <td class="num">${fmtMoney(row.offering_amount)}</td>
+              <td class="num">${fmtMoney(row.share_price)}</td>
+              <td>${miniTextarea("offerings", row.id, "potential_owners", row.potential_owners)}</td>
+              <td>${row.askedgar_url ? `<a href="${escapeHtml(row.askedgar_url)}" target="_blank" rel="noopener">Open</a>` : "-"}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>` : '<div class="muted">No matching historical offerings found for this ticker.</div>';
+  return `<div class="section">
+    <div class="section-head">
+      <h2>Historical Offerings</h2>
+      <button type="button" class="primary" data-save-section="offerings" disabled>Save Historical Offerings</button>
+    </div>
+    <div class="section-content">${body}</div>
+  </div>`;
+}
+
+function miniInput(section, id, field, value) {
+  const original = normalizeValue(value, "text");
+  return `<input class="mini-input edit" data-section="${section}" data-id="${id}" data-field="${field}" data-original="${escapeHtml(original)}" value="${escapeHtml(original)}" />`;
+}
+
+function miniTextarea(section, id, field, value) {
+  const original = normalizeValue(value, "text");
+  return `<textarea class="mini-textarea edit" data-section="${section}" data-id="${id}" data-field="${field}" data-original="${escapeHtml(original)}">${escapeHtml(original)}</textarea>`;
+}
+
+function currentInputValue(input) {
+  return input.value;
+}
+
+function markDirty(input) {
+  const dirty = currentInputValue(input) !== input.dataset.original;
+  input.classList.toggle("dirty", dirty);
+  updateSaveButton(input.dataset.section);
+}
+
+function updateSaveButton(section) {
+  const button = document.querySelector(`[data-save-section="${section}"]`);
+  if (!button) return;
+  button.disabled = !document.querySelector(`[data-section="${section}"].dirty`);
+}
+
+function collectMainUpdates() {
+  const updates = {};
+  document.querySelectorAll('[data-section="main"].dirty').forEach(input => {
+    updates[input.dataset.field] = currentInputValue(input);
+  });
+  return updates;
+}
+
+function collectRowUpdates(section) {
+  const byId = new Map();
+  document.querySelectorAll(`[data-section="${section}"].dirty`).forEach(input => {
+    const id = input.dataset.id;
+    if (!byId.has(id)) byId.set(id, {});
+    byId.get(id)[input.dataset.field] = currentInputValue(input);
+  });
+  return Array.from(byId, ([id, updates]) => ({ id, updates }));
+}
+
+function collectQueueUpdates() {
+  const byDocumentUrl = new Map();
+  document.querySelectorAll('[data-section="queue"].dirty').forEach(input => {
+    const documentUrl = input.dataset.id;
+    if (!documentUrl) return;
+    if (!byDocumentUrl.has(documentUrl)) byDocumentUrl.set(documentUrl, {});
+    byDocumentUrl.get(documentUrl)[input.dataset.field] = currentInputValue(input);
+  });
+  return Array.from(byDocumentUrl, ([document_url, updates]) => ({ document_url, updates }));
+}
+
+async function saveMain() {
+  if (!activeContext) return;
+  const updates = collectMainUpdates();
+  if (!Object.keys(updates).length) return;
+  const result = await postJson("/api/main/update", {
+    document_url: activeContext.main.document_url,
+    updates,
+  });
+  if (!result) return;
+  activeContext.main = result.result;
+  queueRows[activeIndex] = result.result;
+  renderTable(queueRows);
+  renderPanel(activeContext);
+  toast("Details saved");
+}
+
+async function saveQueue() {
+  const rows = collectQueueUpdates();
+  if (!rows.length) return;
+  const button = document.getElementById("save-queue");
+  button.disabled = true;
+  const activeDoc = activeIndex >= 0 ? queueRows[activeIndex]?.document_url : "";
+  let saved = 0;
+  for (const row of rows) {
+    const result = await postJson("/api/main/update", {
+      document_url: row.document_url,
+      updates: row.updates,
+    });
+    if (!result) {
+      updateSaveButton("queue");
+      return;
+    }
+    const idx = queueRows.findIndex(item => item.document_url === row.document_url);
+    if (idx >= 0) queueRows[idx] = result.result;
+    if (activeContext?.main?.document_url === row.document_url) {
+      activeContext.main = result.result;
+    }
+    saved += 1;
+  }
+  applySort();
+  if (activeDoc) activeIndex = queueRows.findIndex(row => row.document_url === activeDoc);
+  renderTable(queueRows);
+  if (panelIsOpen() && activeContext && !panelHasDirty()) renderPanel(activeContext);
+  toast(`Saved ${saved} table row${saved === 1 ? "" : "s"}`);
+}
+
+async function saveHistory(section) {
+  const rows = collectRowUpdates(section);
+  if (!rows.length) return;
+  const endpoint = section === "dilution" ? "/api/dilution/update" : "/api/offerings/update";
+  const result = await postJson(endpoint, { rows });
+  if (!result) return;
+  toast(`Saved ${rows.length} ${section === "dilution" ? "dilution" : "offering"} row${rows.length === 1 ? "" : "s"}`);
+  await openPanel(activeIndex, true);
+}
+
+async function postJson(url, body) {
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok || data.status !== "success") {
+      throw new Error(data.error?.message || `HTTP ${res.status}`);
+    }
+    return data;
+  } catch (err) {
+    toast(err.message, true);
+    return null;
+  }
+}
+
+function toast(message, isError = false) {
+  const el = document.getElementById("toast");
+  el.textContent = message;
+  el.style.background = isError ? "var(--red)" : "var(--text)";
+  el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 2800);
+}
+
+document.getElementById("panel-body").addEventListener("input", event => {
+  if (event.target.matches("[data-section][data-field]")) markDirty(event.target);
+});
+document.getElementById("panel-body").addEventListener("change", event => {
+  if (event.target.matches("[data-section][data-field]")) markDirty(event.target);
+});
+document.getElementById("panel-body").addEventListener("click", event => {
+  const button = event.target.closest("[data-save-section]");
+  if (!button) return;
+  const section = button.dataset.saveSection;
+  if (section === "main") saveMain();
+  else saveHistory(section);
+});
+document.getElementById("rows").addEventListener("input", event => {
+  if (event.target.matches("[data-section][data-field]")) markDirty(event.target);
+});
+document.getElementById("rows").addEventListener("change", event => {
+  if (event.target.matches("[data-section][data-field]")) markDirty(event.target);
+});
+document.getElementById("save-queue").addEventListener("click", saveQueue);
+document.getElementById("sort-form-type").addEventListener("click", () => {
+  if (!confirmDiscardTableIfNeeded()) return;
+  if (sortField === "form_type") {
+    sortDir = sortDir === "asc" ? "desc" : "asc";
+  } else {
+    sortField = "form_type";
+    sortDir = "asc";
+  }
+  applySort();
+  renderTable(queueRows);
+  if (panelIsOpen() && activeContext) syncPanelNavigationState();
+});
+
+document.getElementById("filters").addEventListener("submit", event => {
+  event.preventDefault();
+  loadQueue();
+});
+document.getElementById("today-btn").addEventListener("click", () => {
+  document.getElementById("filed-at").value = todayValue();
+  loadQueue();
+});
+document.getElementById("yesterday-btn").addEventListener("click", () => {
+  document.getElementById("filed-at").value = yesterdayValue();
+  loadQueue();
+});
+document.getElementById("close-panel").addEventListener("click", () => closePanel());
+document.getElementById("overlay").addEventListener("click", () => closePanel());
+document.getElementById("prev-row").addEventListener("click", () => openPanel(activeIndex - 1));
+document.getElementById("next-row").addEventListener("click", () => openPanel(activeIndex + 1));
+document.addEventListener("keydown", event => {
+  if (!panelIsOpen()) return;
+  if (event.key === "Escape") {
+    closePanel();
+    return;
+  }
+  if (event.target.matches("input, textarea, select")) return;
+  if (event.key === "j" || event.key === "ArrowDown") {
+    event.preventDefault();
+    openPanel(activeIndex + 1);
+  }
+  if (event.key === "k" || event.key === "ArrowUp") {
+    event.preventDefault();
+    openPanel(activeIndex - 1);
+  }
+});
+
+const initialParams = new URLSearchParams(window.location.search);
+document.getElementById("filed-at").value = initialParams.get("filed_at") || yesterdayValue();
+loadQueue();
+</script>
+</body>
+</html>

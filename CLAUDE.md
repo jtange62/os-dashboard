@@ -80,6 +80,10 @@ Two tabs:
 
 [Offerings Dashboard/](Offerings%20Dashboard/) is a sister app in this same repo, running on port 8766. Same stack (Python proxy + single-file HTML + Postgres), different data: AskEdgar offerings/dilution/news endpoints on the Research tab, and two review sub-queues (offerings + warrants/convertibles). See [Offerings Dashboard/offeringwarrantssummary.md](Offerings%20Dashboard/offeringwarrantssummary.md) for the equivalent overview. Both apps can run side-by-side (8765 + 8766).
 
+## Sibling app: Registration Dashboard
+
+[Registration Dashboard/](Registration%20Dashboard/) is a sister app for daily registration filings, running on port 8768. It has one date-driven queue from `offering_data_main` filtered by `filed_at` (default: current date minus one) and registration form types. The detail panel stacks three separately saved sections: editable `offering_data_main` fields by `document_url`, historical dilution from `warrants_convertibles3` by `id`, and historical offerings from `all_financings_final` by `id`.
+
 ## Run it
 
 ```
@@ -257,6 +261,7 @@ The `<span class="dl-icons">` wrapper has `onclick="event.stopPropagation()"` so
 ## Conventions for changes
 
 - Prefer editing existing files. The UI is one HTML file by design — keep it that way unless it gets unmanageable.
+- `Shelf Capacity Dashboard/` belongs to a separate repo. It is intentionally ignored here; do not add or commit it from this OS Dashboard repo.
 - Don't pin `dashboard.html`'s state in localStorage beyond what's already there (`os-dashboard-pinned-urls`); the URL is the source of truth for tabs/tickers/modes.
 - Numeric API/Postgres fields can arrive as `"123.45"` strings (psycopg JSON-encodes Decimal as string). Always coerce with the `num(v)` helper before doing math.
 - New editable Review columns must be added to BOTH `EDITABLE_COLUMNS` (server) and the row + panel renderers (client).
@@ -273,6 +278,7 @@ The `<span class="dl-icons">` wrapper has `onclick="event.stopPropagation()"` so
 - **Repo on instance**: `/opt/os-dashboard-repo/` (symlinked from `/opt/os-dashboard` and `/opt/offerings-dashboard`)
 - **Git auth on instance**: token embedded in the HTTPS remote URL (already configured). `git pull` works without extra credentials.
 - **Systemd services**: `os-dashboard.service` (port 8765), `offerings-dashboard.service` (port 8766). Both set to `Restart=always`.
+- **Registration Dashboard** currently runs locally from `Registration Dashboard/server.py` on port 8768; add a systemd service before deploying it as a persistent server app.
 - **Cron job** (ubuntu user): `0 1 * * * /usr/bin/python3 /opt/os-dashboard/pre_analyze.py >> /opt/os-dashboard/pre_analyze.log 2>&1` — runs nightly batch AI analysis at 1 AM CST.
 - **One-off batch scripts on the instance (NOT in git):** `/opt/os-dashboard/adr_analyze.py`, `lowfloat_analyze.py`, `reg_issuance.py` — ad-hoc AI-analysis backfills that query Postgres and POST to `/api/ai-analyze`. They reuse `config.json` and have hardcoded queries/date ranges (e.g. `reg_issuance.py` filters a fixed `filed_at` window), so edit before reuse. Left untracked on purpose; could be consolidated into one parameterized `batch_analyze.py` if they're worth keeping.
 - **config.json**: gitignored — already present on the instance at both `/opt/os-dashboard-repo/config.json` and `/opt/os-dashboard-repo/Offerings Dashboard/config.json`. If credentials change, `scp` the updated file to the instance.
