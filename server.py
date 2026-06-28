@@ -11,6 +11,7 @@ import decimal
 import gzip
 import http.server
 import json
+import re
 import socketserver
 import sys
 import urllib.error
@@ -59,8 +60,19 @@ EXTRACT_MODEL = "claude-haiku-4-5-20251001"
 FILING_FETCH_MAX_CHARS = 700000          # ~175k tokens — safely under Haiku's 200k context
 FILING_EXCERPT_THRESHOLD_CHARS = 60000   # ~15k tokens
 FILING_TRUNCATE_CHARS = 20000            # fallback when pre-extraction yields nothing
+MAX_AI_SOURCE_TEXT_URLS = 5
+FINANCING_CONTEXT_WINDOW_DAYS = 10
 # Back-compat alias (kept so existing references don't break).
 FILING_TEXT_MAX_CHARS = FILING_TRUNCATE_CHARS
+
+SYNTHETIC_OFFERING_SUFFIX_RE = re.compile(
+    r"\s+-\s+OFFERING(?:\s+GROUP\b.*)?$",
+    re.IGNORECASE,
+)
+SOURCE_URL_RE = re.compile(
+    r"\bsource_url\s*=\s*(?P<url>https?://[^\s;,)'\"\]]+)",
+    re.IGNORECASE,
+)
 
 DB_CONFIG = {
     **_CFG["postgres"],
@@ -171,6 +183,12 @@ REVIEW_QUERY = f"""
             OR (
                 (hf.is_adr = true OR hf.category ILIKE '%%ADR_REVIEW%%' OR hf.details ILIKE '%%ADR_REVIEW%%')
                 AND s.ticker IS NOT NULL
+            )
+            -- AI-tier path: after the broad nightly AI pass, show major-exchange rows
+            -- that the model explicitly tiered as CRITICAL or DISCREPANCY.
+            OR (
+                s.ticker IS NOT NULL
+                AND hf.ai_analysis ~* '(^|\n)[[:space:]]*TIER:[[:space:]]*(CRITICAL|DISCREPANCY)([[:space:]-]|$)'
             )
             -- Test-value diff path: bypass every other filter when the
             -- secondary extractor disagrees with our finals by >20 percent.
@@ -286,7 +304,7 @@ AI_OUTPUT_FORMAT = (
     "=== OUTPUT FORMAT (follow exactly) ===\n"
     "Use this exact structure with plain text (no markdown headers, no bold):\n\n"
     "TIER: <one of the following>\n"
-    "  CRITICAL - negative float/tradable_float, or float < 200k\n"
+    "  CRITICAL - negative float/tradable_float, float < 200k, or an ADR/ADS row missing a required ads_ratio\n"
     "  DISCREPANCY - 30%+ change from previous record not explained by a split\n"
     "  MINOR - small discrepancy under ~20%, or cosmetic issue\n"
     "  NO CHANGE NECESSARY - values look correct\n\n"
@@ -409,8 +427,9 @@ STANDARD_AI_PROMPT = (
     "and recent news should mention the effective date.\n"
     "- If outstanding_final is very low, check whether outstanding_shares (raw) and outstanding_shares_reported diverge sharply, "
     "or whether the AI may have extracted the wrong number from the source filing -- the FILING TEXT will tell you.\n"
-    "- If this looks like an ADR / foreign issuer (ADSs mentioned in the filing) but is_adr is not set, note that the row "
-    "may need is_adr and ads_ratio populated and should be reviewed as an ADR.\n"
+    "- If this looks like an ADR / foreign issuer (ADSs mentioned in the filing) but is_adr is not set, or if "
+    "ads_ratio is missing when the row should be on an ADR/ADS basis, tier CRITICAL and recommend is_adr / "
+    "ads_ratio fixes where determinable.\n"
     "- Most important red flags: OS or float < 500k (especially < 100k or negative). "
     "Negatives are almost always wrong, unless the company is a brand-new SPAC or similar.\n"
     "- MISSING VALUES: if any of outstanding_shares, float, or tradable_float on the row is null/missing, "
@@ -442,7 +461,7 @@ ADR_AI_PROMPT = (
     "versus the ordinary-share count implied by market cap / price, the wrong unit was captured. This is a serious data "
     "error -> tier CRITICAL. Give the corrected ordinary-share value (ordinary = ADS_count * ads_ratio) in RECOMMENDED CHANGES.\n"
     "2. ads_ratio IS REQUIRED: ads_ratio = number of ordinary shares per 1 ADS. It must be present for an ADR row. "
-    "If ads_ratio is null/blank, FLAG IT (tier at least DISCREPANCY) -- FIRST check the recent HISTORICAL FLOAT RECORDS "
+    "If ads_ratio is null/blank when an active ADR/ADS ratio is required, FLAG IT as tier CRITICAL -- FIRST check the recent HISTORICAL FLOAT RECORDS "
     "below: if a recent prior record for this ticker has an ads_ratio, that value is the strongest candidate (confirm it "
     "against the FILING TEXT if possible) -- recommend it. Otherwise determine it from the FILING TEXT or deposit-agreement "
     "language (e.g. 'each ADS represents 10 ordinary shares' -> ads_ratio=10) and put it in RECOMMENDED CHANGES. If it cannot "
@@ -478,29 +497,38 @@ SHARE_ISSUANCE_BODY = (
     "EVENT (the row's details/category indicate a share issuance). The source document is about the issuance "
     "itself -- a DEBT CONVERSION, PRIVATE PLACEMENT, REGISTERED OFFERING, WARRANT EXERCISE, or SHARE ISSUANCE FOR "
     "ACQUISITION -- and does NOT necessarily state the company's total outstanding share count.\n\n"
-    "HOW THESE ROWS ARE BUILT: the newly issued shares are ADDED to the most recently reported outstanding share "
-    "count. The correct outstanding_shares for this row should equal:\n"
-    "    (most recent PRIOR outstanding shares) + (shares issued in this event).\n"
-    "Your job is to verify that math and flag problems.\n\n"
+    "HOW THESE ROWS ARE BUILT: synthetic issuance rows usually add newly issued shares to a base outstanding "
+    "share count:\n"
+    "    (base outstanding shares) + (shares issued in this event or same-day event group).\n"
+    "The row document_url may be the source URL with ' - OFFERING' appended, or for grouped same-day events "
+    "may include ' - OFFERING GROUP ...'. Details may include financing event IDs, headlines, share amounts, "
+    "form types, and source_url= values. Use those details to understand what was aggregated.\n\n"
+    "IMPORTANT 424B / DIRECT-VALUE RULE: if the SOURCE FILING or press release directly states current, "
+    "post-closing, or post-offering outstanding shares as of this row's date_final, that direct source value "
+    "is stronger evidence than synthetic base-plus-issued math. Otherwise use base outstanding + issued shares. "
+    "If a direct source value and the synthetic math conflict, flag the conflict clearly for analyst review and "
+    "recommend the value best supported by date_final.\n\n"
     "STEPS:\n"
     "1. ISSUED SHARES: determine the number of shares issued in this event from the SOURCE FILING and RECENT "
     "OFFERINGS (e.g. shares sold in the offering, shares issued on conversion, warrant shares exercised, shares "
     "issued for the acquisition).\n"
-    "2. PRIOR OUTSTANDING: take the most recent prior outstanding share count from the HISTORICAL FLOAT RECORDS "
-    "block (our authoritative computed _final values from Postgres), using the latest record dated before this "
-    "row's date_final.\n"
-    "3. RECONCILE: confirm this row's outstanding_shares ~= prior outstanding + issued. If it doesn't reconcile, "
-    "explain and give the corrected value in RECOMMENDED CHANGES.\n"
-    "4. PREFUNDED WARRANTS: prefunded warrants are normally counted as outstanding shares (they are typically "
+    "2. DIRECT OUTSTANDING: check whether the source text directly states current / post-closing / post-offering "
+    "outstanding shares that apply as of date_final. For 424B filings, this may be the best source of truth.\n"
+    "3. BASE OUTSTANDING: if no direct value controls, take the best base outstanding share count from the "
+    "HISTORICAL FLOAT RECORDS and SAME-DAY / BASE-CANDIDATE HISTORICAL RECORDS blocks. For grouped rows, account "
+    "for every same-day financing event before reconciling.\n"
+    "4. RECONCILE: confirm this row's outstanding_shares is supported by the direct value OR by base outstanding "
+    "+ issued shares. If it doesn't reconcile, explain and give the corrected value in RECOMMENDED CHANGES.\n"
+    "5. PREFUNDED WARRANTS: prefunded warrants are normally counted as outstanding shares (they are typically "
     "exercised immediately for nominal consideration). HOWEVER, if the prefunded warrants in this issuance are a "
     "SIGNIFICANT amount -- more than 20% of the outstanding shares -- FLAG that they should NOT be included in the "
     "outstanding share count, and give the outstanding figure excluding them.\n"
-    "5. RESTRICTED SHARES: if this issuance is a PRIVATE PLACEMENT or a SHARE ISSUANCE FOR ACQUISITION, the issued "
+    "6. RESTRICTED SHARES: if this issuance is a PRIVATE PLACEMENT or a SHARE ISSUANCE FOR ACQUISITION, the issued "
     "shares are RESTRICTED. The row's restricted_shares should equal (prior restricted_shares from the HISTORICAL "
     "FLOAT RECORDS block) + (shares issued). If restricted_shares was not updated accordingly, recommend the corrected value. "
     "For a REGISTERED OFFERING, WARRANT EXERCISE, or DEBT CONVERSION, do NOT add the issued shares to "
     "restricted_shares unless the filing explicitly states the shares are restricted / unregistered.\n"
-    "6. TIMING: if the issuance will occur AFTER this row's date_final (e.g. 'shares to be outstanding after the "
+    "7. TIMING: if the issuance will occur AFTER this row's date_final (e.g. 'shares to be outstanding after the "
     "offering' where the offering closes later), the pre-issuance outstanding count is correct for this row -- do "
     "NOT add shares that have not been issued yet. Likewise avoid double-counting an issuance already reflected in "
     "a prior record.\n\n"
@@ -515,7 +543,8 @@ SHARE_ISSUANCE_ADR_NOTE = (
     "count. If ADR AUDIT CONTEXT is provided, treat it as evidence, not automatic truth: apply ratio/split/termination "
     "events only when effective on/before date_final, do not apply future events, and if the evidence shows an ADR "
     "facility termination or direct ordinary-share listing effective on/before date_final, do not require an active ADS "
-    "ratio; ads_ratio=1 is the pipeline convention for direct ordinary-share trading. If a filing describes an ADS "
+    "ratio; ads_ratio=1 is the pipeline convention for direct ordinary-share trading. If an active ADR/ADS ratio is "
+    "required and ads_ratio is null/blank, tier CRITICAL and recommend the ratio where determinable. If a filing describes an ADS "
     "ratio change / reverse ADS split only and says ordinary shares were unaffected, do NOT divide or multiply ordinary "
     "share counts; keep counts on the ordinary-share basis and update only ads_ratio. "
     "If category/details/notes show ADR_BACKFILL_REPAIR, this is a synthetic backfill split row that may have wrongly "
@@ -550,6 +579,54 @@ def _needs_adr_packet(row):
         or row.get("screener_isadr") is True
         or _has_adr_review_flag(row)
     )
+
+
+def _strip_synthetic_offering_suffix(document_url):
+    return SYNTHETIC_OFFERING_SUFFIX_RE.sub("", document_url or "").strip()
+
+
+def _source_urls_from_details(details):
+    urls = []
+    for match in SOURCE_URL_RE.finditer(details or ""):
+        url = match.group("url").rstrip(".,;")
+        if url:
+            urls.append(url)
+    return urls
+
+
+def _is_ai_text_source_url(url):
+    u = (url or "").lower()
+    return "sec.gov" in u or "benzinga" in u
+
+
+def _is_share_issuance_row(row):
+    text = f"{row.get('category') or ''}\n{row.get('details') or ''}".lower()
+    doc_url = row.get("document_url") or ""
+    return (
+        "share issuance" in text
+        or bool(SYNTHETIC_OFFERING_SUFFIX_RE.search(doc_url))
+    )
+
+
+def _ai_source_text_urls(row):
+    urls = []
+    doc_url = _strip_synthetic_offering_suffix(row.get("document_url") or "")
+    if _is_ai_text_source_url(doc_url):
+        urls.append(doc_url)
+    for url in _source_urls_from_details(row.get("details")):
+        source_url = _strip_synthetic_offering_suffix(url)
+        if _is_ai_text_source_url(source_url):
+            urls.append(source_url)
+
+    deduped = []
+    seen = set()
+    for url in urls:
+        key = url.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(url)
+    return deduped
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -997,6 +1074,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return out
 
     @staticmethod
+    def _prepare_ai_source_text(text):
+        if len(text) > FILING_EXCERPT_THRESHOLD_CHARS:
+            # Long filing: pre-extract the share-relevant excerpts with a cheap model
+            # so the main model sees the right passages, not just a leading slice.
+            excerpts = Handler._extract_filing_excerpts(text)
+            if excerpts:
+                return {"text": excerpts, "excerpts": True}
+            return {
+                "text": text[:FILING_TRUNCATE_CHARS] + "\n\n[...truncated...]",
+                "truncated": True,
+            }
+        return {"text": text}
+
+    @staticmethod
     def _get_adr_audit_context(ticker, row):
         doc_url = row.get("document_url") or ""
         row_date = row.get("date_final")
@@ -1141,26 +1232,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _gather_ai_context(self, ticker, row):
         ctx = {}
-        # Filing text (only for sec.gov / benzinga URLs — that's where the OS came from)
-        doc_url = (row.get("document_url") or "").lower()
-        if "sec.gov" in doc_url or "benzinga" in doc_url:
-            try:
-                txt = self._get_filing_text(row.get("document_url"))
-                if txt:
-                    if len(txt) > FILING_EXCERPT_THRESHOLD_CHARS:
-                        # Long filing: pre-extract the share-relevant excerpts with a cheap model
-                        # so the main model sees the right passages, not just a leading slice.
-                        excerpts = self._extract_filing_excerpts(txt)
-                        if excerpts:
-                            ctx["filing_text"] = excerpts
-                            ctx["filing_text_excerpts"] = True
-                        else:
-                            ctx["filing_text"] = txt[:FILING_TRUNCATE_CHARS] + "\n\n[...truncated...]"
-                            ctx["filing_text_truncated"] = True
-                    else:
-                        ctx["filing_text"] = txt
-            except Exception as e:
-                ctx["filing_text_error"] = str(e)
+        # Source text (only for sec.gov / benzinga URLs; synthetic offering suffix stripped).
+        source_urls = _ai_source_text_urls(row)
+        if source_urls:
+            ctx["source_text_urls"] = source_urls
+            ctx["source_texts"] = []
+            ctx["source_text_errors"] = []
+            for source_url in source_urls[:MAX_AI_SOURCE_TEXT_URLS]:
+                try:
+                    txt = self._get_filing_text(source_url)
+                    if not txt:
+                        ctx["source_text_errors"].append({"url": source_url, "error": "not found"})
+                        continue
+                    prepared = self._prepare_ai_source_text(txt)
+                    prepared["url"] = source_url
+                    ctx["source_texts"].append(prepared)
+                except Exception as e:
+                    ctx["source_text_errors"].append({"url": source_url, "error": str(e)})
+            if len(source_urls) > MAX_AI_SOURCE_TEXT_URLS:
+                ctx["source_text_urls_skipped"] = source_urls[MAX_AI_SOURCE_TEXT_URLS:]
+
+        row_date = row.get("date_final")
+        is_share_issuance = _is_share_issuance_row(row)
 
         # Historical float records — from Postgres (our computed _final values + restricted_shares),
         # strictly before this row's date_final, MANUAL excluded, with at least one final present.
@@ -1185,6 +1278,83 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 ctx["prior_records"] = cur.fetchall()
         except Exception as e:
             ctx["prior_records_error"] = str(e)
+
+        if is_share_issuance and row_date:
+            try:
+                with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute(
+                        "SELECT date_final, filed_at, form_type, document_url, "
+                        "outstanding_shares, outstanding_shares_reported, outstanding_shares_final, "
+                        "float, float_final, tradable_float, tradable_float_final, "
+                        "affiliate_shares, restricted_shares, ads_ratio, category, details "
+                        "FROM historical_float_final "
+                        "WHERE ticker = %s AND document_url <> %s "
+                        "AND date_final = %s "
+                        "AND (form_type IS NULL OR form_type NOT LIKE %s) "
+                        "ORDER BY filed_at DESC NULLS LAST, document_url "
+                        "LIMIT 12",
+                        (ticker, row.get("document_url") or "", row_date, "%MANUAL%"),
+                    )
+                    ctx["same_day_records"] = cur.fetchall()
+            except Exception as e:
+                ctx["same_day_records_error"] = str(e)
+
+            try:
+                with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute(
+                        f"""
+                        SELECT
+                            a.id,
+                            a.filed_at,
+                            a.headline,
+                            a.shares_unadjusted,
+                            a.form_type,
+                            a.document_url,
+                            a.primary_filing,
+                            a.outstanding_shares AS financing_outstanding_shares,
+                            source_h.outstanding_shares AS source_outstanding_shares,
+                            source_h.outstanding_shares_reported AS source_outstanding_shares_reported,
+                            source_h.outstanding_shares_final AS source_outstanding_shares_final,
+                            (
+                                source_h.outstanding_shares IS NOT NULL
+                                OR source_h.outstanding_shares_reported IS NOT NULL
+                                OR source_h.outstanding_shares_final IS NOT NULL
+                            ) AS source_has_extracted_os,
+                            synthetic_h.document_url AS synthetic_document_url,
+                            synthetic_h.outstanding_shares_final AS synthetic_outstanding_shares_final,
+                            synthetic_h.document_url IS NOT NULL AS synthetic_offering_row_exists
+                        FROM all_financings_final a
+                        LEFT JOIN LATERAL (
+                            SELECT h.outstanding_shares, h.outstanding_shares_reported, h.outstanding_shares_final
+                            FROM historical_float_final h
+                            WHERE h.ticker = a.ticker
+                              AND h.document_url = a.document_url
+                            ORDER BY h.date_final DESC NULLS LAST, h.filed_at DESC NULLS LAST
+                            LIMIT 1
+                        ) source_h ON TRUE
+                        LEFT JOIN LATERAL (
+                            SELECT h.document_url, h.outstanding_shares_final
+                            FROM historical_float_final h
+                            WHERE h.ticker = a.ticker
+                              AND (
+                                  h.document_url = a.document_url || ' - OFFERING'
+                                  OR LEFT(h.document_url, LENGTH(a.document_url || ' - OFFERING GROUP')) =
+                                     a.document_url || ' - OFFERING GROUP'
+                              )
+                            ORDER BY h.date_final DESC NULLS LAST, h.filed_at DESC NULLS LAST
+                            LIMIT 1
+                        ) synthetic_h ON TRUE
+                        WHERE a.ticker = %s
+                          AND a.filed_at BETWEEN %s::date - INTERVAL '{FINANCING_CONTEXT_WINDOW_DAYS} days'
+                                             AND %s::date + INTERVAL '{FINANCING_CONTEXT_WINDOW_DAYS} days'
+                        ORDER BY ABS(a.filed_at - %s::date), a.filed_at DESC NULLS LAST, a.id DESC
+                        LIMIT 20
+                        """,
+                        (ticker, row_date, row_date, row_date),
+                    )
+                    ctx["financing_events_near_date"] = cur.fetchall()
+            except Exception as e:
+                ctx["financing_events_near_date_error"] = str(e)
 
         if _needs_adr_packet(row):
             try:
@@ -1248,6 +1418,33 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         sections = []
         sections.append("=== ROW UNDER REVIEW ===")
         sections.append(json.dumps(row, default=_json_default, indent=2))
+        source_texts = ctx.get("source_texts") or []
+        if source_texts:
+            for idx, source in enumerate(source_texts, 1):
+                url = source.get("url") or "(unknown URL)"
+                if source.get("excerpts"):
+                    sections.append(
+                        f"\n=== SOURCE FILING/NEWS TEXT {idx} - RELEVANT EXCERPTS "
+                        f"(auto-extracted from a LONG source; URL: {url}) ==="
+                    )
+                    sections.append(
+                        "Each excerpt is VERBATIM and separated by a line of '-----'. "
+                        "This is NOT the full source; it is the share-relevant passages pulled from it."
+                    )
+                elif source.get("truncated"):
+                    sections.append(
+                        f"\n=== SOURCE FILING/NEWS TEXT {idx} "
+                        f"(long source; first ~5000 tokens only; URL: {url}) ==="
+                    )
+                else:
+                    sections.append(f"\n=== SOURCE FILING/NEWS TEXT {idx} (full text; URL: {url}) ===")
+                sections.append(source.get("text") or "")
+        if ctx.get("source_text_errors"):
+            sections.append("\n=== SOURCE FILING/NEWS TEXT FETCH ERRORS ===")
+            sections.append(json.dumps(ctx["source_text_errors"], default=_json_default, indent=2))
+        if ctx.get("source_text_urls_skipped"):
+            sections.append("\n=== SOURCE FILING/NEWS TEXT URLS NOT FETCHED (cap reached) ===")
+            sections.append(json.dumps(ctx["source_text_urls_skipped"], default=_json_default, indent=2))
         if ctx.get("filing_text"):
             if ctx.get("filing_text_excerpts"):
                 sections.append(
@@ -1286,6 +1483,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "restricted_shares; strictly before this row's date_final; MANUAL rows excluded; most recent first) ==="
         )
         sections.append(json.dumps(ctx.get("prior_records", []), default=_json_default, indent=2))
+        if "same_day_records" in ctx or ctx.get("same_day_records_error"):
+            sections.append(
+                "\n=== SAME-DAY / BASE-CANDIDATE HISTORICAL RECORDS "
+                "(same ticker and date_final; current row excluded; MANUAL rows excluded) ==="
+            )
+            if ctx.get("same_day_records_error"):
+                sections.append(f"(failed to fetch: {ctx['same_day_records_error']})")
+            else:
+                sections.append(json.dumps(ctx.get("same_day_records", []), default=_json_default, indent=2))
+        if "financing_events_near_date" in ctx or ctx.get("financing_events_near_date_error"):
+            sections.append(
+                f"\n=== ALL_FINANCINGS_FINAL EVENTS AROUND ROW DATE (+/- {FINANCING_CONTEXT_WINDOW_DAYS} DAYS) ==="
+            )
+            sections.append(
+                "source_has_extracted_os means the original source URL already has an OS row/value in "
+                "historical_float_final; synthetic_offering_row_exists means a matching synthetic '- OFFERING' "
+                "or '- OFFERING GROUP' row exists."
+            )
+            if ctx.get("financing_events_near_date_error"):
+                sections.append(f"(failed to fetch: {ctx['financing_events_near_date_error']})")
+            else:
+                sections.append(json.dumps(ctx.get("financing_events_near_date", []), default=_json_default, indent=2))
         sections.append("\n=== 7 MOST RECENT NEWS / FILINGS (excludes form_type grok, jmt415) ===")
         sections.append(json.dumps(ctx.get("news", []), default=_json_default, indent=2))
         sections.append("\n=== 3 MOST RECENT OFFERINGS ===")
@@ -1299,9 +1518,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # Prompt selection. Precedence: share-issuance > ADR > standard.
         # A share-issuance row that is also an ADR uses the issuance prompt with an ADR note folded in.
         is_adr_row = _needs_adr_packet(row)
-        details_l = (row.get("details") or "").lower()
-        category_l = (row.get("category") or "").lower()
-        is_issuance = "share issuance" in details_l or "share issuance" in category_l
+        is_issuance = _is_share_issuance_row(row)
         if is_issuance:
             system_prompt = SHARE_ISSUANCE_BODY + (SHARE_ISSUANCE_ADR_NOTE if is_adr_row else "") + AS_OF_PRINCIPLE + AI_OUTPUT_FORMAT
         elif is_adr_row:

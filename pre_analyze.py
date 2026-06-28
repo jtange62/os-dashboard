@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Nightly batch: pre-populate AI analysis for today's review queue rows.
+"""Nightly batch: pre-populate AI analysis for daily candidate rows.
 Intended to run via cron at 1 AM CST so analysts see results when they start.
 
-Calls the local server's /api/review and /api/ai-analyze endpoints.
+Selects candidate rows from Postgres and calls the local server's /api/ai-analyze endpoint.
 Skips rows that already have an ai_analysis (the endpoint returns cached=True).
 
 Rate-limit handling:
@@ -18,6 +18,10 @@ import time
 import urllib.request
 import urllib.error
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import psycopg
+from psycopg.rows import dict_row
 
 # --- Config ---
 SERVER = "http://localhost:8765"
@@ -27,6 +31,17 @@ INITIAL_BACKOFF = 30       # first retry wait (seconds)
 MAX_BACKOFF = 600           # cap backoff at 10 minutes
 
 CST = timezone(timedelta(hours=-6))
+ROOT = Path(__file__).parent
+CONFIG_PATH = ROOT / "config.json"
+
+with CONFIG_PATH.open(encoding="utf-8") as _f:
+    _CFG = json.load(_f)
+
+DB_CONFIG = {
+    **_CFG["postgres"],
+    "connect_timeout": 15,
+    "application_name": "os-dashboard-pre-analyze",
+}
 
 
 def yesterday_cst():
@@ -34,10 +49,23 @@ def yesterday_cst():
 
 
 def fetch_queue(filed_at):
-    url = f"{SERVER}/api/review?filed_at={filed_at}"
-    req = urllib.request.Request(url)
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    with psycopg.connect(**DB_CONFIG) as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT document_url, ticker, date_final, filed_at, ai_analysis
+            FROM historical_float_final
+            WHERE filed_at = %s
+              AND (
+                  outstanding_shares_final IS NOT NULL
+                  OR float_final IS NOT NULL
+                  OR tradable_float_final IS NOT NULL
+              )
+            ORDER BY date_final DESC NULLS LAST, filed_at DESC NULLS LAST, document_url
+            """,
+            (filed_at,),
+        )
+        rows = cur.fetchall()
+    return {"status": "success", "results": rows}
 
 
 def analyze(document_url, attempt=0):
@@ -80,7 +108,7 @@ def log(msg):
 
 
 def process_date(filed_at):
-    """Fetch the daily queue for a single date and analyze any un-analyzed rows."""
+    """Fetch daily AI candidates for a single date and analyze any un-analyzed rows."""
     log(f"Processing filed_at={filed_at}")
 
     data = fetch_queue(filed_at)
@@ -89,7 +117,7 @@ def process_date(filed_at):
         return
 
     rows = data.get("results", [])
-    log(f"Found {len(rows)} rows in daily queue")
+    log(f"Found {len(rows)} rows in daily AI candidates")
 
     analyzed = 0
     cached = 0
