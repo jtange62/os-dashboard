@@ -74,7 +74,7 @@
   }
   input[type=text] { width: 220px; text-transform: uppercase; letter-spacing: 0.5px; }
   input:focus { border-color: var(--accent); outline: none; }
-  button.primary, button.secondary {
+  button.primary, button.secondary, button.danger {
     border: none;
     border-radius: 6px;
     padding: 7px 14px;
@@ -91,6 +91,15 @@
     border: 1px solid var(--border);
   }
   button.secondary:hover { border-color: var(--accent); color: var(--accent); }
+  button.danger {
+    background: transparent;
+    color: var(--red);
+    border: 1px solid rgba(248, 81, 73, 0.45);
+  }
+  button.danger:hover {
+    border-color: var(--red);
+    background: var(--red-bg);
+  }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
 
   main { max-width: 1680px; margin: 0 auto; padding: 20px 24px 60px; }
@@ -680,7 +689,7 @@
 
     <div id="review-form-lowfloat" class="meta-row" style="margin-bottom:14px;display:none;">
       <button type="button" class="primary" id="review-lowfloat-refresh">Refresh</button>
-      <span style="color:var(--dim);font-size:0.85em;">Records where float_final or tradable_float_final &lt; 300k (limit 50, ordered by filed_at)</span>
+      <span style="color:var(--dim);font-size:0.85em;">Records where float_final or tradable_float_final &lt; 300k (limit 50, Critical/Discrepancy first)</span>
       <span id="review-summary-lowfloat" class="status" style="margin-left:auto;"></span>
     </div>
 
@@ -717,6 +726,7 @@
         <span style="width:8px;"></span>
         <button type="button" class="primary save-btn" id="panel-save" disabled>Save</button>
         <button type="button" class="secondary" id="panel-revert">Revert</button>
+        <button type="button" class="danger" id="panel-delete">Delete</button>
         <button type="button" class="close-btn" data-panel-close title="Close (Esc)" aria-label="Close panel">×</button>
       </div>
     </div>
@@ -2194,6 +2204,7 @@ function renderReviewRow(r) {
         <div class="row-actions">
           <button class="primary save-btn" data-save="${escapeHtml(url)}" disabled>Save</button>
           <button class="secondary" data-revert="${escapeHtml(url)}">Revert</button>
+          <button class="danger" data-delete="${escapeHtml(url)}">Delete</button>
         </div>
       </td>
     </tr>
@@ -2213,6 +2224,9 @@ function attachReviewHandlers() {
   });
   document.querySelectorAll("#review-body [data-revert]").forEach((b) => {
     b.addEventListener("click", (e) => { e.stopPropagation(); revertRow(b.dataset.revert); });
+  });
+  document.querySelectorAll("#review-body [data-delete]").forEach((b) => {
+    b.addEventListener("click", (e) => { e.stopPropagation(); deleteReviewRow(b.dataset.delete); });
   });
   document.querySelectorAll("#review-body [data-unpin]").forEach((b) => {
     b.addEventListener("click", (e) => {
@@ -2391,6 +2405,71 @@ function revertRow(url) {
   const panel = document.getElementById("review-panel");
   if (panel.classList.contains("open") && panel.dataset.url === url) {
     renderReviewPanel(r);
+  }
+}
+
+function removeFromReviewCache(cache, url) {
+  if (!cache) return;
+  cache.results = cache.results.filter((r) => r.document_url !== url);
+  cache.count = cache.results.length;
+}
+
+function updateVisibleReviewSummary() {
+  const count = reviewRowsByUrl.size;
+  if (reviewMode === "lowfloat") {
+    document.getElementById("review-summary-lowfloat").innerHTML =
+      `<strong>${count}</strong> records with float &lt; 300k`;
+  } else if (reviewMode === "adr") {
+    document.getElementById("review-summary-adr").innerHTML =
+      `<strong>${count}</strong> ADR records`;
+  } else if (reviewMode === "backfill") {
+    document.getElementById("review-summary-backfill").innerHTML =
+      `<strong>${count}</strong> ADR backfill-repair records`;
+  } else if (reviewMode === "ticker") {
+    const ticker = (document.getElementById("review-ticker").value || "").trim().toUpperCase();
+    document.getElementById("review-summary-ticker").innerHTML =
+      `<strong>${count}</strong> records for <strong>${escapeHtml(ticker)}</strong> - all forms, all dates`;
+  } else {
+    const date = document.getElementById("review-date").value;
+    document.getElementById("review-summary").innerHTML =
+      `<strong>${count}</strong> visible after delete - filed_at <strong>${escapeHtml(date)}</strong>`;
+  }
+}
+
+async function deleteReviewRow(url) {
+  const r = reviewRowsByUrl.get(url);
+  const label = r
+    ? `${r.ticker || "Unknown ticker"} ${r.form_type || ""} reported ${fmtDate(r.date_final)} filed ${fmtDate(r.filed_at)}`
+    : url;
+  if (!confirm(`Delete this review row from Postgres?\n\n${label}\n\nThis cannot be undone from the dashboard.`)) return;
+
+  try {
+    const res = await fetch("/api/review/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ document_url: url, confirm_delete: true }),
+    });
+    const j = await res.json();
+    if (!res.ok || j.status !== "success") {
+      throw new Error(j?.error?.message || `HTTP ${res.status}`);
+    }
+
+    dirtyByUrl.delete(url);
+    staleUrls.delete(url);
+    unpinUrl(url);
+    reviewRowsByUrl.delete(url);
+    reviewAllRows = reviewAllRows.filter((row) => row.document_url !== url);
+    removeFromReviewCache(lowFloatCache, url);
+    removeFromReviewCache(adrCache, url);
+    removeFromReviewCache(backfillCache, url);
+
+    const panel = document.getElementById("review-panel");
+    if (panel.classList.contains("open") && panel.dataset.url === url) closeReviewPanel();
+    renderReviewTable([...reviewRowsByUrl.values()]);
+    updateVisibleReviewSummary();
+    toast(`Deleted ${j.deleted?.ticker || r?.ticker || "row"}`);
+  } catch (e) {
+    toast(`Delete failed: ${e.message}`, "error");
   }
 }
 
@@ -2849,6 +2928,10 @@ document.getElementById("panel-save").addEventListener("click", () => {
 document.getElementById("panel-revert").addEventListener("click", () => {
   const url = document.getElementById("review-panel").dataset.url;
   if (url) revertRow(url);
+});
+document.getElementById("panel-delete").addEventListener("click", () => {
+  const url = document.getElementById("review-panel").dataset.url;
+  if (url) deleteReviewRow(url);
 });
 document.getElementById("panel-prev").addEventListener("click", () => panelNavigate(-1));
 document.getElementById("panel-next").addEventListener("click", () => panelNavigate(1));

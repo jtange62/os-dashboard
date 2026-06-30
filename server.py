@@ -188,7 +188,7 @@ REVIEW_QUERY = f"""
             -- that the model explicitly tiered as CRITICAL or DISCREPANCY.
             OR (
                 s.ticker IS NOT NULL
-                AND hf.ai_analysis ~* '(^|\n)[[:space:]]*TIER:[[:space:]]*(CRITICAL|DISCREPANCY)([[:space:]-]|$)'
+                AND hf.ai_analysis ~* '(^|\n)[[:space:]]*TIER:[[:space:]]*(CRITICAL|DISCREPANCY)'
             )
             -- Test-value diff path: bypass every other filter when the
             -- secondary extractor disagrees with our finals by >20 percent.
@@ -267,7 +267,15 @@ REVIEW_LOW_FLOAT_QUERY = f"""
         AND (hf.ai_analysis IS NULL OR hf.ai_analysis NOT LIKE 'CORRECTED%%')
         AND COALESCE(s.industry, '') <> 'Shell Companies'
         AND COALESCE(s.companyname, '') NOT ILIKE '%%Acquisition Corp%%'
-    ORDER BY hf.filed_at DESC NULLS LAST
+    ORDER BY
+        CASE
+            WHEN hf.ai_analysis ~* '(^|\n)[[:space:]]*TIER:[[:space:]]*CRITICAL' THEN 0
+            WHEN hf.ai_analysis ~* '(^|\n)[[:space:]]*TIER:[[:space:]]*DISCREPANCY' THEN 1
+            ELSE 2
+        END,
+        hf.filed_at DESC NULLS LAST,
+        hf.date_final DESC NULLS LAST,
+        hf.document_url
     LIMIT 50
 """
 
@@ -651,6 +659,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._handle_review_by_urls()
             elif url.path == "/api/review/update":
                 self._handle_review_update()
+            elif url.path == "/api/review/delete":
+                self._handle_review_delete()
             elif url.path == "/api/ai-analyze":
                 self._handle_ai_analyze()
             else:
@@ -861,6 +871,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json(404, {"status": "error", "error": {"code": "not_found", "message": "row not found"}})
             return
         self._send_json(200, {"status": "success", "result": row})
+
+    def _handle_review_delete(self):
+        body = self._read_json_body()
+        document_url = body.get("document_url")
+        if not document_url:
+            self._send_json(400, {"status": "error", "error": {"code": "missing_pk", "message": "document_url required"}})
+            return
+        if body.get("confirm_delete") is not True:
+            self._send_json(400, {"status": "error", "error": {"code": "confirm_required", "message": "confirm_delete required"}})
+            return
+
+        with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                "DELETE FROM historical_float_final WHERE document_url = %s "
+                "RETURNING document_url, ticker, filed_at, date_final, form_type",
+                (document_url,),
+            )
+            row = cur.fetchone()
+            conn.commit()
+        if not row:
+            self._send_json(404, {"status": "error", "error": {"code": "not_found", "message": "row not found"}})
+            return
+        self._send_json(200, {"status": "success", "deleted": row})
 
     @staticmethod
     def _coerce(raw, kind):
