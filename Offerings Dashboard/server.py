@@ -13,6 +13,7 @@ import hashlib
 import http.server
 import http.cookies
 import json
+import re
 import secrets
 import socketserver
 import sys
@@ -60,6 +61,18 @@ BG_DELAY_BETWEEN = 10          # seconds between successful API calls
 BG_INITIAL_BACKOFF = 30        # first retry wait on 429/529
 BG_MAX_BACKOFF = 600           # cap backoff at 10 minutes
 BG_MAX_RETRIES = 8             # max retries per row on rate limit
+
+AUTO_DONE_MARKET_CAP_MIN = decimal.Decimal("200000000")
+AI_AUTO_FALSE_REASONS = {
+    "DUPLICATE",
+    "NON_FINANCING",
+    "FINANCIAL_RESULTS_ONLY",
+    "PENDING",
+    "TICKER_MISMATCH",
+    "OTHER_EXCLUDED",
+}
+AI_AUTO_TRUE_REASONS = {"CLEAR_VALID_FINANCING"}
+NOT_WARRANT_OR_CONVERTIBLE = "NOT WARRANT OR CONVERTIBLE"
 
 DB_CONFIG = {
     **_CFG["postgres"],
@@ -301,6 +314,132 @@ def _json_default(obj):
     if isinstance(obj, (datetime.datetime, datetime.date)):
         return obj.isoformat()
     raise TypeError(f"Type {type(obj)} not serializable")
+
+
+def _decimal_or_none(value):
+    if value is None or value == "":
+        return None
+    try:
+        return decimal.Decimal(str(value).replace(",", "").replace("$", "").strip())
+    except (decimal.InvalidOperation, ValueError):
+        return None
+
+
+def _analysis_field(text, field):
+    if not text:
+        return None
+    pattern = re.compile(rf"^\s*{re.escape(field)}\s*:\s*(.+?)\s*$", re.IGNORECASE)
+    for line in text.splitlines():
+        match = pattern.match(line)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def _normalize_ai_token(value):
+    if value is None:
+        return None
+    token = re.sub(r"[^A-Za-z0-9]+", "_", str(value).strip()).strip("_").upper()
+    return token or None
+
+
+def _parse_offerings_ai_decision(analysis):
+    done_raw = _analysis_field(analysis, "Done")
+    if not done_raw:
+        return None
+    done_match = re.match(r"^(true|false)\b", done_raw.strip(), re.IGNORECASE)
+    if not done_match:
+        return None
+    return {
+        "done": done_match.group(1).lower() == "true",
+        "confidence": _normalize_ai_token(_analysis_field(analysis, "Confidence")),
+        "status": _normalize_ai_token(_analysis_field(analysis, "Status")),
+        "auto_action": _normalize_ai_token(_analysis_field(analysis, "Auto Action")),
+        "auto_reason": _normalize_ai_token(_analysis_field(analysis, "Auto Reason")),
+    }
+
+
+def _extract_market_cap(payload):
+    candidates = []
+    if isinstance(payload, dict):
+        for key in ("result", "data"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                candidates.append(value)
+        results = payload.get("results")
+        if isinstance(results, list) and results and isinstance(results[0], dict):
+            candidates.append(results[0])
+        candidates.append(payload)
+    for item in candidates:
+        for key in ("market_cap_final", "market_cap", "marketCap"):
+            cap = _decimal_or_none(item.get(key))
+            if cap is not None:
+                return cap
+    return None
+
+
+def _fetch_market_cap(ticker):
+    if not ticker:
+        return None
+    try:
+        return _extract_market_cap(Handler._askedgar_get("/v1/float-outstanding", {"ticker": ticker}))
+    except Exception:
+        return None
+
+
+def _offerings_auto_done_decision(ticker, analysis):
+    decision = _parse_offerings_ai_decision(analysis)
+    if not decision:
+        return None, None, None
+    if decision["confidence"] != "HIGH" or decision["status"] != "OK":
+        return None, None, None
+    action = decision["auto_action"]
+    reason = decision["auto_reason"]
+    if decision["done"] is False:
+        if action == "SET_DONE_FALSE" and reason in AI_AUTO_FALSE_REASONS:
+            return "SET_DONE_FALSE", False, None
+        return None, None, None
+    if action == "SET_DONE_TRUE" and reason in AI_AUTO_TRUE_REASONS:
+        market_cap = _fetch_market_cap(ticker)
+        if market_cap is not None and market_cap > AUTO_DONE_MARKET_CAP_MIN:
+            return "SET_DONE_TRUE", True, market_cap
+    return None, None, None
+
+
+def _analysis_with_auto_applied(analysis, action):
+    if not action or re.search(r"^\s*Auto Applied\s*:", analysis or "", re.IGNORECASE | re.MULTILINE):
+        return analysis
+    return f"{(analysis or '').rstrip()}\n\nAuto Applied: {action}"
+
+
+def _owners_two_is_not_warrant(value):
+    return NOT_WARRANT_OR_CONVERTIBLE in (value or "").upper()
+
+
+def _mark_not_warrant_rows_verified_false(filed_dates=None, ids=None):
+    clauses = [
+        "owners_two ILIKE %s",
+        "verified IS DISTINCT FROM FALSE",
+    ]
+    params = [f"%{NOT_WARRANT_OR_CONVERTIBLE}%"]
+    if filed_dates:
+        clauses.append("filed_at = ANY(%s)")
+        params.append(list(filed_dates))
+    if ids:
+        clauses.append("id = ANY(%s)")
+        params.append([int(i) for i in ids])
+    if not filed_dates and not ids:
+        return 0
+    sql = (
+        "UPDATE warrants_convertibles4 "
+        "SET verified = FALSE, updated_at = NOW() "
+        f"WHERE {' AND '.join(clauses)}"
+    )
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        count = cur.rowcount
+        conn.commit()
+    return count
 
 
 def get_conn():
@@ -746,6 +885,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         else:
             filed_at = datetime.datetime.now(CHICAGO).date() - datetime.timedelta(days=1)
 
+        _mark_not_warrant_rows_verified_false(filed_dates=[filed_at])
+
         sql = _build_warrants_query(verified_filter)
         with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(sql, {"filed_at": filed_at})
@@ -777,6 +918,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not id_ints:
             self._send_json(200, {"status": "success", "count": 0, "results": []})
             return
+
+        _mark_not_warrant_rows_verified_false(ids=id_ints)
 
         with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
@@ -829,6 +972,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not row:
             self._send_json(404, {"status": "error", "error": {"code": "not_found", "message": "row not found"}})
             return
+        if table == "warrants_convertibles4" and _owners_two_is_not_warrant(row.get("owners_two")) and row.get("verified") is not False:
+            with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    f"UPDATE {table} SET verified = FALSE, updated_at = NOW() "
+                    f"WHERE id = %s RETURNING {WARRANTS_REVIEW_COLUMNS}",
+                    (row_id,),
+                )
+                row = cur.fetchone()
+                conn.commit()
         self._send_json(200, {"status": "success", "result": row})
 
     def _handle_warrants_create(self):
@@ -871,6 +1023,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 cur.execute(f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), COALESCE((SELECT MAX(id) FROM {table}), 0) + 1, false)")
                 conn.commit()
                 cur.execute(sql, vals)
+                row = cur.fetchone()
+                conn.commit()
+        if table == "warrants_convertibles4" and _owners_two_is_not_warrant(row.get("owners_two")) and row.get("verified") is not False:
+            with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    f"UPDATE {table} SET verified = FALSE, updated_at = NOW() "
+                    f"WHERE id = %s RETURNING {WARRANTS_REVIEW_COLUMNS}",
+                    (row["id"],),
+                )
                 row = cur.fetchone()
                 conn.commit()
         self._send_json(200, {"status": "success", "result": row})
@@ -917,13 +1078,38 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json(502, {"status": "error", "error": {"code": "analyzer_failed", "message": str(e)}})
             return
 
+        auto_applied, auto_done, market_cap = _offerings_auto_done_decision(ticker, analysis)
+        saved_analysis = _analysis_with_auto_applied(analysis, auto_applied)
+        sets = ["doublecheck = %s"]
+        values = [saved_analysis]
+        if auto_applied:
+            sets.append("done = %s")
+            values.append(auto_done)
+        sets.append("updated_at = NOW()")
+        values.append(row_id)
         with get_conn() as conn, conn.cursor() as cur:
             cur.execute(
-                "UPDATE offering_data_new_final_clone SET doublecheck = %s, updated_at = NOW() WHERE id = %s",
-                (analysis, row_id),
+                f"UPDATE offering_data_new_final_clone SET {', '.join(sets)} WHERE id = %s",
+                values,
             )
             conn.commit()
-        self._send_json(200, {"status": "success", "cached": False, "analysis": analysis})
+        with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                f"SELECT {REVIEW_COLUMNS} FROM offering_data_new_final_clone WHERE id = %s",
+                (row_id,),
+            )
+            saved_row = cur.fetchone()
+        self._send_json(
+            200,
+            {
+                "status": "success",
+                "cached": False,
+                "analysis": saved_analysis,
+                "auto_applied": auto_applied,
+                "market_cap_final": market_cap,
+                "result": saved_row,
+            },
+        )
 
     def _handle_warrants_ai_analyze(self):
         if not ANTHROPIC_KEY:
@@ -1201,6 +1387,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "- Use Status: NEEDS ATTENTION with Done True when THIS ROW can be committed but related staging rows need analyst dedupe or source-priority review.\n"
             "- If this row is clearly the weaker staging duplicate (for example, a shell filing with missing terms while another staging row has the "
             "complete press-release terms), Done False is appropriate. Explain that briefly.\n\n"
+            "## CONFIDENCE AND AUTO ACTION\n"
+            "Confidence is confidence in the Done decision for THIS ROW, not a general confidence score.\n"
+            "- Confidence High means original source text was available, ticker attribution is clear, the financing category is clear, "
+            "key fields are materially correct, duplicate status is clear, Status is OK, and there are no major corrected or missing values.\n"
+            "- Confidence Medium means the Done decision is probably right but there is some uncertainty, minor correction, missing non-critical field, "
+            "staging overlap, or imperfect source context.\n"
+            "- Confidence Low means source text is unavailable or weak, the event/ticker/duplicate status is ambiguous, or there is a major extraction issue.\n"
+            "Use Auto Action exactly as follows:\n"
+            "- SET_DONE_FALSE only when Done False, Confidence High, Status OK, and Auto Reason is a hard exclusion: "
+            "DUPLICATE, NON_FINANCING, FINANCIAL_RESULTS_ONLY, PENDING, TICKER_MISMATCH, or OTHER_EXCLUDED.\n"
+            "- SET_DONE_TRUE only when Done True, Confidence High, Status OK, Auto Reason is CLEAR_VALID_FINANCING, "
+            "there are no corrections or missing values, and there is no unresolved staging/source-priority issue. "
+            "Do not consider market cap; the server applies that separate gate.\n"
+            "- NONE for every other case, including any NEEDS ATTENTION row.\n\n"
             "## A) EXTRACTION ACCURACY\n"
             "Check every extracted field against the original filing text using these rules.\n\n"
             "**IMPORTANT**: Only flag issues that are materially wrong. Do NOT flag:\n"
@@ -1359,8 +1559,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "REMINDER: if headline is 'FINANCIAL/SHAREHOLDER RESULTS' alone, Done MUST be False — no exceptions. "
             "If headline starts with PENDING due to missing key details or a long-dated closing, Done MUST be False. "
             "If headline contains 'ATM TERMINATED', Done should be True.)\n\n"
+            "Confidence: High, Medium, or Low\n\n"
+            "Auto Action: SET_DONE_TRUE, SET_DONE_FALSE, or NONE\n\n"
+            "Auto Reason: one of CLEAR_VALID_FINANCING, DUPLICATE, NON_FINANCING, FINANCIAL_RESULTS_ONLY, PENDING, "
+            "TICKER_MISMATCH, OTHER_EXCLUDED, FIELD_ERROR, STAGING_CONFLICT, NEEDS_ATTENTION, or UNCLEAR\n\n"
             "Done Reason: one short sentence explaining the Done decision for THIS ROW only.\n\n"
-            "Status: OK or 'NEEDS ATTENTION'\n\n"
+            "Status: OK or NEEDS ATTENTION\n\n"
             "Analysis: short description of why its ok or needs attention\n\n"
             "Corrected / Missing Values:\n\n"
             "(in bullet format, list both corrected values AND any values that are present in the filing text but were "
@@ -1919,16 +2123,34 @@ def _bg_analyze_one(row_id, ticker, row, stop_event, attempt=0):
         return False
 
     # Save result — guard with doublecheck IS NULL to avoid overwriting concurrent analysis
+    auto_applied, auto_done, market_cap = _offerings_auto_done_decision(ticker, analysis)
+    saved_analysis = _analysis_with_auto_applied(analysis, auto_applied)
+    sets = ["doublecheck = %s"]
+    values = [saved_analysis]
+    if auto_applied:
+        sets.append("done = %s")
+        values.append(auto_done)
+    sets.append("updated_at = NOW()")
+    values.append(row_id)
+
     try:
-        with get_conn() as conn, conn.cursor() as cur:
+        with get_conn() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 "UPDATE offering_data_new_final_clone "
-                "SET doublecheck = %s, updated_at = NOW() "
-                "WHERE id = %s AND doublecheck IS NULL",
-                (analysis, row_id),
+                f"SET {', '.join(sets)} "
+                "WHERE id = %s AND doublecheck IS NULL "
+                "RETURNING id",
+                values,
             )
+            saved = cur.fetchone()
             conn.commit()
-        _bg_log(f"    OK")
+        if saved:
+            note = f" auto={auto_applied}" if auto_applied else ""
+            if market_cap is not None:
+                note += f" mcap={market_cap}"
+            _bg_log(f"    OK{note}")
+        else:
+            _bg_log("    skipped (already analyzed)")
         return True
     except Exception as e:
         _bg_log(f"    DB save failed: {e}")
@@ -1958,6 +2180,13 @@ def _bg_warrants_analyze_loop(stop_event):
 def _bg_warrants_run_batch(stop_event):
     today = datetime.datetime.now(CHICAGO).date()
     yesterday = today - datetime.timedelta(days=1)
+
+    try:
+        marked = _mark_not_warrant_rows_verified_false(filed_dates=[today, yesterday])
+        if marked:
+            _bg_warrants_log(f"Marked {marked} NOT WARRANT OR CONVERTIBLE rows verified=false.")
+    except Exception as e:
+        _bg_warrants_log(f"Auto-mark query failed: {e}")
 
     sql = f"""
         SELECT {WARRANTS_REVIEW_COLUMNS}

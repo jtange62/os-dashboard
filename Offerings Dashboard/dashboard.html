@@ -2407,8 +2407,15 @@ async function triggerAiAnalysis(q, id, force) {
     }
     // Update the cached row data
     const r = q.rows.get(id);
-    if (r) r.doublecheck = data.analysis;
-    body.innerHTML = `<div class="ai-analysis-text">${escapeHtml(data.analysis)}</div>`;
+    if (r) {
+      if (data.result) Object.assign(r, data.result);
+      else r.doublecheck = data.analysis;
+    }
+    if (r && data.result) {
+      renderReviewPanel(q, r);
+    } else {
+      body.innerHTML = `<div class="ai-analysis-text">${escapeHtml(data.analysis)}</div>`;
+    }
     // Re-render the table row to show truncated analysis
     const tr = document.querySelector(`#review-body tr[data-queue="${q.key}"][data-id="${id}"]`);
     if (tr && r) {
