@@ -142,7 +142,7 @@
     width: 100%;
     border-collapse: collapse;
   }
-  .queue-table { min-width: 1980px; }
+  .queue-table { min-width: 1980px; table-layout: fixed; }
   th {
     position: sticky;
     top: 0;
@@ -155,7 +155,26 @@
     text-transform: uppercase;
     padding: 8px 9px;
     border-bottom: 1px solid var(--line);
+  }
+  .th-label {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .col-resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: col-resize;
+    z-index: 3;
+  }
+  .col-resize-handle:hover,
+  .col-resize-handle.active {
+    background: var(--accent);
+    opacity: 0.5;
   }
   td {
     padding: 8px 9px;
@@ -457,24 +476,42 @@
   <div id="status"></div>
   <div class="table-wrap" id="table-wrap" style="display:none;">
     <table class="queue-table">
+      <colgroup>
+        <col data-col="ticker" style="width:130px;">
+        <col data-col="filed" style="width:90px;">
+        <col data-col="form_type" style="width:110px;">
+        <col data-col="effective" style="width:90px;">
+        <col data-col="headline" style="width:260px;">
+        <col data-col="offering_type" style="width:140px;">
+        <col data-col="13f_filers" style="width:200px;">
+        <col data-col="potential_owners" style="width:200px;">
+        <col data-col="selling_shareholder_details" style="width:260px;">
+        <col data-col="atm_remaining" style="width:110px;">
+        <col data-col="offering_amount" style="width:110px;">
+        <col data-col="file_no" style="width:110px;">
+        <col data-col="bank" style="width:130px;">
+        <col data-col="atm" style="width:70px;">
+        <col data-col="primary" style="width:80px;">
+        <col data-col="filing" style="width:70px;">
+      </colgroup>
       <thead>
         <tr>
-          <th>Ticker</th>
-          <th>Filed</th>
-          <th><button type="button" class="sort-head" id="sort-form-type">Form <span class="sort-indicator" id="form-sort-indicator"></span></button></th>
-          <th>Effective</th>
-          <th>Headline</th>
-          <th>Offering Type</th>
-          <th>13F Filers</th>
-          <th>Potential Owners</th>
-          <th>Selling Shareholder Details</th>
-          <th class="num">ATM Remaining</th>
-          <th class="num">Offering Amount</th>
-          <th>File No</th>
-          <th>Bank</th>
-          <th>ATM</th>
-          <th>Primary</th>
-          <th>Filing</th>
+          <th><span class="th-label">Ticker</span><span class="col-resize-handle"></span></th>
+          <th><span class="th-label">Filed</span><span class="col-resize-handle"></span></th>
+          <th><span class="th-label"><button type="button" class="sort-head" id="sort-form-type">Form <span class="sort-indicator" id="form-sort-indicator"></span></button></span><span class="col-resize-handle"></span></th>
+          <th><span class="th-label">Effective</span><span class="col-resize-handle"></span></th>
+          <th><span class="th-label">Headline</span><span class="col-resize-handle"></span></th>
+          <th><span class="th-label">Offering Type</span><span class="col-resize-handle"></span></th>
+          <th><span class="th-label">13F Filers</span><span class="col-resize-handle"></span></th>
+          <th><span class="th-label">Potential Owners</span><span class="col-resize-handle"></span></th>
+          <th><span class="th-label">Selling Shareholder Details</span><span class="col-resize-handle"></span></th>
+          <th class="num"><span class="th-label">ATM Remaining</span><span class="col-resize-handle"></span></th>
+          <th class="num"><span class="th-label">Offering Amount</span><span class="col-resize-handle"></span></th>
+          <th><span class="th-label">File No</span><span class="col-resize-handle"></span></th>
+          <th><span class="th-label">Bank</span><span class="col-resize-handle"></span></th>
+          <th><span class="th-label">ATM</span><span class="col-resize-handle"></span></th>
+          <th><span class="th-label">Primary</span><span class="col-resize-handle"></span></th>
+          <th><span class="th-label">Filing</span><span class="col-resize-handle"></span></th>
         </tr>
       </thead>
       <tbody id="rows"></tbody>
@@ -1096,6 +1133,43 @@ document.addEventListener("keydown", event => {
     openPanel(activeIndex - 1);
   }
 });
+
+function initColumnResize() {
+  const STORAGE_KEY = "registration-dashboard-col-widths";
+  const table = document.querySelector(".queue-table");
+  const cols = Array.from(table.querySelectorAll("colgroup col"));
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); } catch (e) { saved = {}; }
+  cols.forEach(col => {
+    const width = saved[col.dataset.col];
+    if (width) col.style.width = width + "px";
+  });
+
+  table.querySelectorAll("thead th").forEach((th, i) => {
+    const handle = th.querySelector(".col-resize-handle");
+    const col = cols[i];
+    if (!handle || !col) return;
+    handle.addEventListener("mousedown", event => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = col.getBoundingClientRect().width;
+      handle.classList.add("active");
+      const onMove = e => {
+        col.style.width = Math.max(40, startWidth + (e.clientX - startX)) + "px";
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        handle.classList.remove("active");
+        saved[col.dataset.col] = Math.round(col.getBoundingClientRect().width);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  });
+}
+initColumnResize();
 
 const initialParams = new URLSearchParams(window.location.search);
 document.getElementById("filed-at").value = initialParams.get("filed_at") || yesterdayValue();
